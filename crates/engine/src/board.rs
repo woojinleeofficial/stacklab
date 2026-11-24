@@ -140,9 +140,7 @@ impl Board {
                 w += 1;
             }
         }
-        for r in w..MAX_ROWS {
-            self.rows[r] = 0;
-        }
+        self.rows[w..].fill(0);
         cleared
     }
 
@@ -177,9 +175,7 @@ impl Board {
         let overflow = self.rows[MAX_ROWS - n..].iter().any(|&r| r != 0);
         self.rows.copy_within(0..MAX_ROWS - n, n);
         let g = FULL_ROW & !(1 << hole_x);
-        for r in 0..n {
-            self.rows[r] = g;
-        }
+        self.rows[..n].fill(g);
         !overflow
     }
 }

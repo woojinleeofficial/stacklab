@@ -201,8 +201,8 @@ pub fn quick_eval(board: &Board, p: &Placement) -> i32 {
     for x in 0..10 {
         let h = b.column_height(x) as i32;
         max_h = max_h.max(h);
-        for y in 0..h as usize {
-            if b.rows[y] >> x & 1 == 0 {
+        for row in b.rows.iter().take(h as usize) {
+            if row >> x & 1 == 0 {
                 holes += 1;
             }
         }

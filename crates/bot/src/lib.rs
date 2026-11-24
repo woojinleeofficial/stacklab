@@ -61,8 +61,8 @@ pub fn evaluate(board: &Board) -> i32 {
     let mut holes = 0;
     let mut covered = 0;
     for (x, &h) in heights.iter().enumerate() {
-        for y in 0..h as usize {
-            if board.rows[y] >> x & 1 == 0 {
+        for (y, row) in board.rows.iter().enumerate().take(h as usize) {
+            if row >> x & 1 == 0 {
                 holes += 1;
                 covered += h - y as i32 - 1;
             }

@@ -16,9 +16,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: toolchain (pinned by rust-toolchain.toml)
+        run: rustup show
       - uses: Swatinem/rust-cache@v2
       - name: fmt
         run: cargo fmt --all -- --check

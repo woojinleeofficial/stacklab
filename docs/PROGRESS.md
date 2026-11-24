@@ -6,7 +6,7 @@
 
 - **현재 단계:** STEP 1 완료 → 다음 STEP 2(문제 프레임워크). STEP 0은 2026-11-24 사용자 확인 완료.
 - **작업 기기:** 클라우드 리눅스(Windows PC 미연결). Windows 빌드·테스트는 GitHub Actions `windows-latest`.
-- **마지막 CI 결과:** 아직 실행 기록 없음 — 푸시 후 GitHub Actions에서 확인 필요.
+- **마지막 CI 결과:** 1차(STEP 0 커밋) 실패 — CI의 새 clippy 린트. 툴체인 1.100.0 고정 후 재실행(D-027)...
 - **Windows PC에서 확인이 필요한 항목:** 없음(STEP 0). STEP 7에서 14.4 성능 항목.
 
 ## STEP 0 — 설계 확정
