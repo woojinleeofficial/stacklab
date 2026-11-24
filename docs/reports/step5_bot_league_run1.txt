@@ -1,0 +1,10 @@
+bot league: 200 rounds per adjacent pair, reference L3 = 1500, 489s
+preset  pps  depth beam mistake  rating   ±RD    vs lower (win%)  avg round  capped
+L0      0.5     0    1   30.0%  -1539530720   350    -                     0s   0
+L1      0.8     0    1   15.0%  -5594879991220   350    166/200 (83%)       150s   0
+L2      1.1     0    1    7.0%  4933764305437   350    153/200 (76%)       147s   0
+L3      1.4     1    6    3.0%     1500    30    192/200 (96%)       184s   0
+L4      1.8     1   10    1.0%     1669    20    145/200 (72%)       275s   0
+L5      2.3     1   14    0.0%     1859    21    150/200 (75%)       268s   0
+L6      3.0     1   20    0.0%     2095    30    159/200 (80%)       242s   0
+monotone with preset strength: false

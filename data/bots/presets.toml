@@ -4,7 +4,7 @@
 # depth / beam: search over current+hold and the visible Next window (never hidden pieces)
 # mistake_pm: per-mille chance to pick a random top-5 move
 # attack / downstack / safety: evaluation weights
-reference = "L3"
+reference = "L4"
 
 [[preset]]
 id = "L0"
@@ -41,6 +41,17 @@ safety = 30
 
 [[preset]]
 id = "L3"
+pps_milli = 1250
+input_delay_frames = 12
+depth = 1
+beam = 3
+mistake_pm = 50
+attack = 38
+downstack = 30
+safety = 30
+
+[[preset]]
+id = "L4"
 pps_milli = 1400
 input_delay_frames = 10
 depth = 1
@@ -51,7 +62,7 @@ downstack = 30
 safety = 30
 
 [[preset]]
-id = "L4"
+id = "L5"
 pps_milli = 1800
 input_delay_frames = 7
 depth = 1
@@ -62,7 +73,7 @@ downstack = 35
 safety = 30
 
 [[preset]]
-id = "L5"
+id = "L6"
 pps_milli = 2300
 input_delay_frames = 5
 depth = 1
@@ -73,7 +84,7 @@ downstack = 35
 safety = 30
 
 [[preset]]
-id = "L6"
+id = "L7"
 pps_milli = 3000
 input_delay_frames = 3
 depth = 1

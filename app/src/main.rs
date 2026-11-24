@@ -900,7 +900,10 @@ impl StackApp {
             .bots
             .bot
             .iter()
-            .map(|b| (b.id.clone(), b.rating, b.rd))
+            .map(|b| {
+                let (r, rd) = self.matchp.bot_rating(&b.id, b.rating, b.rd);
+                (b.id.clone(), r, rd)
+            })
             .collect();
         let band = (
             self.policy.matches.win_prob_band[0],
@@ -916,14 +919,15 @@ impl StackApp {
             .find(|b| b.id == id)
             .cloned()
             .expect("selected bot");
+        let (cal_rating, cal_rd) = self.matchp.bot_rating(&cal.id, cal.rating, cal.rd);
         let seed = self.rng.below(u64::MAX >> 1);
         let m = MatchPlay::new(
             kind,
             self.rs.clone(),
             self.handling,
             stacklab_bot::BotConfig::preset(&id),
-            cal.rating,
-            cal.rd,
+            cal_rating,
+            cal_rd,
             p,
             in_band,
             seed,
@@ -966,7 +970,9 @@ impl StackApp {
                     bot: m.bot_id.clone(),
                     bot_rating: m.bot_rating,
                     bot_rd: m.bot_rd,
-                    calibration_version: self.bots.calibration_version,
+                    calibration_version: self
+                        .matchp
+                        .calibration_version(self.bots.calibration_version),
                     observations: obs,
                 };
                 if let Ok(true) = self.saved.set.eval_round(rec) {

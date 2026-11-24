@@ -223,6 +223,13 @@ pub struct MatchProfile {
     pub offset_rd: f64,
     pub anchors: Vec<TlAnchor>,
     pub evaluations: u32,
+    /// In-use calibration (spec 7.3 step 4): bot ratings adjusted by this user's evaluations,
+    /// on the bots' app scale, with an RD floor so they move slowly.
+    #[serde(default)]
+    pub bot_adjust: BTreeMap<String, Rating>,
+    /// Local calibration version: league version * 1000 + in-use adjustments.
+    #[serde(default)]
+    pub calibration_bumps: u32,
 }
 
 /// Uncertainty of the bot scale shift before any anchored evaluation.
@@ -242,6 +249,8 @@ impl MatchProfile {
             offset_rd: 0.0,
             anchors: Vec::new(),
             evaluations: 0,
+            bot_adjust: BTreeMap::new(),
+            calibration_bumps: 0,
         }
     }
 
@@ -342,7 +351,49 @@ impl MatchProfile {
             policy.rating.rd_max,
         );
         self.evaluations += 1;
+        // in-use bot calibration: each opponent preset is rated against the user's rating
+        let mut by_bot: BTreeMap<String, (Rating, Vec<Outcome>)> = BTreeMap::new();
+        for r in rounds.iter().filter(|r| !r.void) {
+            let cur = self.bot_adjust.get(&r.bot).copied().unwrap_or(Rating::new(
+                r.bot_rating,
+                r.bot_rd,
+                0.06,
+            ));
+            let user_on_bot_scale = before.rating - self.offset;
+            by_bot
+                .entry(r.bot.clone())
+                .or_insert((cur, Vec::new()))
+                .1
+                .push(Outcome {
+                    opp_rating: user_on_bot_scale,
+                    opp_rd: before.rd,
+                    score: if r.won { 0.0 } else { 1.0 },
+                });
+        }
+        for (id, (cur, games)) in by_bot {
+            let mut upd = cur.update(
+                &games,
+                policy.rating.tau,
+                policy.matches.bot_rd_floor,
+                350.0,
+            );
+            upd.rd = upd.rd.max(policy.matches.bot_rd_floor);
+            self.bot_adjust.insert(id, upd);
+        }
+        self.calibration_bumps += 1;
         (before, self.rating)
+    }
+
+    /// Current (league + in-use adjusted) rating of a preset on the bots' app scale.
+    pub fn bot_rating(&self, id: &str, league_rating: f64, league_rd: f64) -> (f64, f64) {
+        self.bot_adjust
+            .get(id)
+            .map_or((league_rating, league_rd), |r| (r.rating, r.rd))
+    }
+
+    /// calibrationVersion stored with match records.
+    pub fn calibration_version(&self, league_version: u32) -> u32 {
+        league_version * 1000 + self.calibration_bumps
     }
 }
 
@@ -584,6 +635,20 @@ mod tests {
     fn p_min(p: &Policy) -> f64 {
         let _ = p;
         150.0
+    }
+
+    #[test]
+    fn in_use_calibration_moves_bots_slowly_and_bumps_version() {
+        let p = Policy::bundled();
+        let mut m = MatchProfile::new(&p);
+        m.rating = Rating::new(1500.0, 60.0, 0.06);
+        let v0 = m.calibration_version(1);
+        m.rate_evaluation(&[round(true, false), round(true, false)], &p);
+        let (r, rd) = m.bot_rating("L3", 1500.0, 60.0);
+        assert!(r < 1500.0, "bot lost twice -> rated down");
+        assert!(r > 1300.0, "but slowly (RD floor)");
+        assert!(rd >= p.matches.bot_rd_floor);
+        assert_eq!(m.calibration_version(1), v0 + 1);
     }
 
     #[test]
