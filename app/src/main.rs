@@ -4,10 +4,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod draw;
+mod matchplay;
 mod strings;
 
 use draw::{field, mini_piece, FieldView};
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Vec2};
+use matchplay::{MatchKind, MatchPlay};
 use stacklab_engine::game::{Handling, InputEvent, Key};
 use stacklab_engine::rng::Rng;
 use stacklab_engine::{Ruleset, Spin};
@@ -19,6 +21,10 @@ use stacklab_training::policy::Policy;
 use stacklab_training::problem::{Goal, Module, Problem, WitnessStep};
 use stacklab_training::service::ProblemService;
 use stacklab_training::session::{AttemptResult, AttemptSession, FailReason, Status};
+use stacklab_training::set::{
+    opener_built, select_opponent, MatchProfile, MiniStatus, Observations, Phase, RoundRecord,
+    SetState,
+};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use strings::Strings;
@@ -75,6 +81,18 @@ struct SavedCycle {
     cycle: Cycle,
     diagnosis: bool,
     number: u32,
+    #[serde(default = "SetState::new_first")]
+    set: SetState,
+}
+
+/// UI-06 data of the last evaluation.
+#[derive(Clone)]
+struct EvalReport {
+    wins: u32,
+    losses: u32,
+    before: Option<(f64, f64)>,
+    after: Option<(f64, f64)>,
+    weaknesses: Vec<&'static str>,
 }
 
 struct Playing {
@@ -92,6 +110,7 @@ enum Screen {
     Loading,
     Play(Box<Playing>),
     Openers,
+    Match(Box<MatchPlay>),
 }
 
 struct StackApp {
@@ -110,6 +129,12 @@ struct StackApp {
     coverage: std::collections::BTreeMap<String, stacklab_opener::library::CoverageRecord>,
     pick: (String, String),
     opener_msg: Option<String>,
+    matchp: MatchProfile,
+    bots: stacklab_bot::Calibration,
+    tl_input: (f64, f64),
+    tl_msg: Option<String>,
+    eval_report: Option<EvalReport>,
+    rs: Arc<Ruleset>,
 }
 
 fn data_dir() -> std::path::PathBuf {
@@ -169,7 +194,11 @@ impl StackApp {
                 cycle: Cycle::new(diagnosis_plan(1)),
                 diagnosis: true,
                 number: 0,
+                set: SetState::new_first(),
             });
+        let matchp = load("match")
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_else(|| MatchProfile::new(&policy));
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -187,7 +216,13 @@ impl StackApp {
             });
         StackApp {
             s: Strings::korean(),
-            worker: spawn_worker(rs, policy.clone(), cc.egui_ctx.clone()),
+            worker: spawn_worker(rs.clone(), policy.clone(), cc.egui_ctx.clone()),
+            rs,
+            matchp,
+            bots: stacklab_bot::calibration(),
+            tl_input: (1500.0, 150.0),
+            tl_msg: None,
+            eval_report: None,
             policy,
             store,
             profile,
@@ -213,6 +248,10 @@ impl StackApp {
             let _ = st.set_state(
                 "cycle",
                 &serde_json::to_string(&self.saved).unwrap_or_default(),
+            );
+            let _ = st.set_state(
+                "match",
+                &serde_json::to_string(&self.matchp).unwrap_or_default(),
             );
         }
     }
@@ -407,10 +446,17 @@ impl StackApp {
                     ("s", report.successes.to_string()),
                 ],
             ));
+            let mut set = self.saved.set.clone();
+            if self.saved.diagnosis {
+                let _ = set.diagnosis_done();
+            } else {
+                let _ = set.cycle_done();
+            }
             self.saved = SavedCycle {
                 cycle: Cycle::new(plan_cycle(&self.profile, &self.policy, &mut self.rng)),
                 diagnosis: false,
                 number: self.saved.number + 1,
+                set,
             };
         }
         self.persist();
@@ -427,12 +473,13 @@ impl StackApp {
                 ],
             )
         } else {
+            let c = match self.saved.set.phase {
+                Phase::Training(k) => k as u32,
+                _ => 3,
+            };
             self.s.fmt(
                 "cycle_progress",
-                &[
-                    ("c", ((self.saved.number - 1) % 3 + 1).to_string()),
-                    ("n", n.to_string()),
-                ],
+                &[("c", c.to_string()), ("n", n.to_string())],
             )
         }
     }
@@ -445,22 +492,28 @@ impl StackApp {
         } else {
             self.s.get("continue_training")
         };
+        let phase = self.saved.set.phase;
         ui.horizontal(|ui| {
-            if ui
-                .add(egui::Button::new(RichText::new(label).size(20.0)))
-                .clicked()
+            if matches!(phase, Phase::Diagnosis | Phase::Training(_))
+                && ui
+                    .add(egui::Button::new(RichText::new(label).size(20.0)))
+                    .clicked()
             {
                 self.request_next();
             }
-            ui.label(self.progress_text());
+            if matches!(phase, Phase::Diagnosis | Phase::Training(_)) {
+                ui.label(self.progress_text());
+            }
             if ui.button(self.s.get("openers")).clicked() {
                 self.screen = Screen::Openers;
             }
         });
-        ui.label(RichText::new(self.s.get("next_match_soon")).weak());
+        self.match_actions(ui);
         if let Some(r) = &self.last_report {
             ui.label(r);
         }
+        ui.separator();
+        self.match_rating_panel(ui);
         ui.separator();
         ui.label(RichText::new(self.s.get("skill_ratings")).strong());
         egui::Grid::new("skills").striped(true).show(ui, |ui| {
@@ -670,6 +723,365 @@ impl StackApp {
             }
             Err(e) => self.opener_msg = Some(e),
         }
+    }
+
+    fn match_rating_panel(&mut self, ui: &mut egui::Ui) {
+        let r = self.matchp.rating;
+        let key = if self.matchp.anchored() {
+            "match_rating_tl"
+        } else {
+            "match_rating_app"
+        };
+        ui.label(RichText::new(self.s.get("match_rating")).strong());
+        ui.label(self.s.fmt(
+            key,
+            &[
+                ("r", format!("{:.0}", r.rating)),
+                ("d", format!("{:.0}", r.rd)),
+            ],
+        ));
+        ui.horizontal(|ui| {
+            ui.label(self.s.get("tl_input"));
+            ui.label(self.s.get("tl_glicko"));
+            ui.add(
+                egui::DragValue::new(&mut self.tl_input.0)
+                    .range(0.0..=4000.0)
+                    .speed(5.0),
+            );
+            ui.label(self.s.get("tl_rd"));
+            ui.add(
+                egui::DragValue::new(&mut self.tl_input.1)
+                    .range(30.0..=350.0)
+                    .speed(1.0),
+            );
+            if ui.button(self.s.get("tl_apply")).clicked() {
+                let now = stacklab_store::now_utc();
+                self.matchp.enter_anchor(
+                    self.tl_input.0,
+                    self.tl_input.1,
+                    &now,
+                    self.policy.tl_anchor.min_rd,
+                );
+                self.tl_msg = Some(
+                    self.s
+                        .fmt("tl_saved", &[("n", self.matchp.anchors.len().to_string())]),
+                );
+                self.persist();
+            }
+        });
+        if let Some(m) = &self.tl_msg {
+            ui.label(m);
+        }
+    }
+
+    /// Phase-specific actions: mini matches, evaluation, result (UI-06).
+    fn match_actions(&mut self, ui: &mut egui::Ui) {
+        let set = self.saved.set.clone();
+        match set.phase {
+            Phase::Mini(k) => {
+                ui.label(RichText::new(self.s.fmt("phase_mini", &[("k", k.to_string())])).strong());
+                ui.horizontal(|ui| {
+                    if ui.button(self.s.get("mini_start")).clicked() {
+                        self.start_match(MatchKind::Mini(k));
+                    }
+                    if ui.button(self.s.get("mini_skip")).clicked() {
+                        let _ = self.saved.set.skip_mini();
+                        self.persist();
+                    }
+                    if ui.button(self.s.get("mini_defer")).clicked() {
+                        let _ = self.saved.set.defer_mini();
+                        self.persist();
+                    }
+                });
+            }
+            Phase::Evaluation => {
+                ui.label(RichText::new(self.s.get("phase_eval")).strong());
+                let (w, l) = set.score();
+                ui.horizontal(|ui| {
+                    let label = if set.eval_rounds.is_empty() {
+                        self.s.get("eval_start")
+                    } else {
+                        self.s
+                            .fmt("eval_resume", &[("w", w.to_string()), ("l", l.to_string())])
+                    };
+                    if ui.button(label).clicked() {
+                        self.start_match(MatchKind::Evaluation);
+                    }
+                    if ui.button(self.s.get("eval_defer")).clicked() {
+                        let _ = self.saved.set.defer_evaluation();
+                        self.persist();
+                    }
+                    if ui.button(self.s.get("eval_close")).clicked() {
+                        let _ = self.saved.set.close_without_evaluation();
+                        self.eval_report = Some(EvalReport {
+                            wins: w,
+                            losses: l,
+                            before: None,
+                            after: None,
+                            weaknesses: vec![],
+                        });
+                        self.persist();
+                    }
+                });
+            }
+            Phase::Result => {
+                ui.label(
+                    RichText::new(self.s.fmt("phase_result", &[("n", set.number.to_string())]))
+                        .strong(),
+                );
+                if let Some(rep) = self.eval_report.clone() {
+                    if set.closed_unrated {
+                        ui.label(self.s.get("eval_unrated"));
+                    } else {
+                        let res = if rep.wins > rep.losses {
+                            self.s.get("eval_won")
+                        } else {
+                            self.s.get("eval_lost")
+                        };
+                        ui.label(
+                            RichText::new(self.s.fmt(
+                                "eval_result",
+                                &[
+                                    ("w", rep.wins.to_string()),
+                                    ("l", rep.losses.to_string()),
+                                    ("res", res),
+                                ],
+                            ))
+                            .size(20.0),
+                        );
+                        if let (Some(a), Some(b)) = (rep.before, rep.after) {
+                            ui.label(self.s.fmt(
+                                "match_delta",
+                                &[
+                                    ("a", format!("{:.0} ± {:.0}", a.0, a.1)),
+                                    ("b", format!("{:.0} ± {:.0}", b.0, b.1)),
+                                ],
+                            ));
+                        }
+                        ui.label(RichText::new(self.s.get("weaknesses")).strong());
+                        if rep.weaknesses.is_empty() {
+                            ui.label(self.s.get("weakness_none"));
+                        }
+                        for w in &rep.weaknesses {
+                            ui.label(format!(
+                                "• {}",
+                                self.s.get(&format!("weak_{}", w.replace('-', "_")))
+                            ));
+                        }
+                    }
+                }
+                if ui.button(self.s.get("next_set")).clicked() {
+                    if let Ok(n) = self.saved.set.next_set() {
+                        self.saved.set = n;
+                        self.eval_report = None;
+                        self.persist();
+                    }
+                }
+            }
+            _ => {}
+        }
+        // deferred minis can still be played before the result
+        if set.phase != Phase::Result {
+            for (i, m) in set.minis.iter().enumerate() {
+                if *m == MiniStatus::Deferred {
+                    ui.horizontal(|ui| {
+                        ui.label(self.s.get("deferred_minis"));
+                        if ui.button(self.s.get("play_deferred")).clicked() {
+                            self.start_match(MatchKind::DeferredMini(i));
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    fn start_match(&mut self, kind: MatchKind) {
+        let bots: Vec<(String, f64, f64)> = self
+            .bots
+            .bot
+            .iter()
+            .map(|b| (b.id.clone(), b.rating, b.rd))
+            .collect();
+        let band = (
+            self.policy.matches.win_prob_band[0],
+            self.policy.matches.win_prob_band[1],
+        );
+        let Some((id, p, in_band)) = select_opponent(&self.matchp, &bots, band) else {
+            return;
+        };
+        let cal = self
+            .bots
+            .bot
+            .iter()
+            .find(|b| b.id == id)
+            .cloned()
+            .expect("selected bot");
+        let seed = self.rng.below(u64::MAX >> 1);
+        let m = MatchPlay::new(
+            kind,
+            self.rs.clone(),
+            self.handling,
+            stacklab_bot::BotConfig::preset(&id),
+            cal.rating,
+            cal.rd,
+            p,
+            in_band,
+            seed,
+        );
+        self.screen = Screen::Match(Box::new(m));
+    }
+
+    fn opener_shapes(&self) -> Vec<stacklab_engine::Board> {
+        let Some(lo) = &self.profile.loadout else {
+            return vec![];
+        };
+        [&lo.primary, &lo.fallback]
+            .iter()
+            .filter_map(|id| self.library.get(id))
+            .flat_map(|d| d.branches.iter().map(|b| b.target.clone()))
+            .collect()
+    }
+
+    /// Round finished: update the set, ratings and observed weaknesses.
+    fn finish_round(&mut self, m: &MatchPlay) {
+        let won = m.finished.unwrap_or(false);
+        let mut obs = Observations::from_events(&m.user_events);
+        let shapes = self.opener_shapes();
+        if !shapes.is_empty() {
+            obs.opener_built = Some(opener_built(&m.user_boards, &shapes));
+        }
+        self.profile
+            .apply_match_observations(std::slice::from_ref(&obs));
+        match m.kind {
+            MatchKind::Mini(_) => {
+                let _ = self.saved.set.mini_result(won);
+            }
+            MatchKind::DeferredMini(i) => {
+                self.saved.set.deferred_mini_result(i, won);
+            }
+            MatchKind::Evaluation => {
+                let rec = RoundRecord {
+                    won,
+                    void: false,
+                    bot: m.bot_id.clone(),
+                    bot_rating: m.bot_rating,
+                    bot_rd: m.bot_rd,
+                    calibration_version: self.bots.calibration_version,
+                    observations: obs,
+                };
+                if let Ok(true) = self.saved.set.eval_round(rec) {
+                    let (w, l) = self.saved.set.score();
+                    let (before, after) = self
+                        .matchp
+                        .rate_evaluation(&self.saved.set.eval_rounds, &self.policy);
+                    let weaknesses = self
+                        .saved
+                        .set
+                        .eval_rounds
+                        .iter()
+                        .flat_map(|r| r.observations.weaknesses().into_iter().map(|x| x.1))
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect();
+                    self.eval_report = Some(EvalReport {
+                        wins: w,
+                        losses: l,
+                        before: Some((before.rating, before.rd)),
+                        after: Some((after.rating, after.rd)),
+                        weaknesses,
+                    });
+                }
+            }
+        }
+        self.persist();
+    }
+
+    fn match_screen(&mut self, ui: &mut egui::Ui, mut m: Box<MatchPlay>) -> Screen {
+        let base = m.versus.players[0].now_sub();
+        let map = keymap();
+        ui.input(|i| {
+            for e in &i.events {
+                if let egui::Event::Key {
+                    key,
+                    pressed,
+                    repeat,
+                    ..
+                } = e
+                {
+                    if *repeat {
+                        continue;
+                    }
+                    if let Some((_, k)) = map.iter().find(|(ek, _)| ek == key) {
+                        let t = base + (m.pending.len() as u64).min(9);
+                        m.pending.push(InputEvent {
+                            time: t,
+                            key: *k,
+                            down: *pressed,
+                        });
+                    }
+                }
+            }
+        });
+        let now = ui.input(|i| i.time);
+        m.advance(now);
+        ui.ctx().request_repaint();
+        let (w, l) = self.saved.set.score();
+        let header = match m.kind {
+            MatchKind::Evaluation => self.s.fmt(
+                "round_label",
+                &[
+                    ("n", (w + l + 1).to_string()),
+                    ("w", w.to_string()),
+                    ("l", l.to_string()),
+                ],
+            ),
+            MatchKind::Mini(k) => self.s.fmt("mini_label", &[("k", k.to_string())]),
+            MatchKind::DeferredMini(i) => self.s.fmt("mini_label", &[("k", (i + 1).to_string())]),
+        };
+        let opp = self.s.fmt(
+            "opponent",
+            &[
+                ("b", m.bot_id.clone()),
+                ("p", format!("{:.0}", 100.0 * m.expected)),
+                (
+                    "o",
+                    if m.in_band {
+                        String::new()
+                    } else {
+                        self.s.get("out_of_band")
+                    },
+                ),
+            ],
+        );
+        let mut done = false;
+        if let Some(won) = m.finished {
+            egui::Panel::bottom("round_result").show(ui, |ui| {
+                ui.label(
+                    RichText::new(if won {
+                        self.s.get("round_won")
+                    } else {
+                        self.s.get("round_lost")
+                    })
+                    .size(22.0),
+                );
+                if ui.button(self.s.get("continue_btn")).clicked() {
+                    done = true;
+                }
+            });
+        }
+        let pending_tpl = self.s.get("pending_garbage");
+        let you = self.s.get("you");
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.label(&opp);
+            m.draw(ui, &header, &you, &|n| {
+                pending_tpl.replace("{n}", &n.to_string())
+            });
+        });
+        if done {
+            self.finish_round(&m);
+            return Screen::Dashboard;
+        }
+        Screen::Match(m)
     }
 
     fn collect_inputs(&self, ui: &egui::Ui, play: &mut Playing) -> Vec<&'static str> {
@@ -932,10 +1344,12 @@ impl eframe::App for StackApp {
         {
             self.request_next();
         }
-        if std::env::var("STACKLAB_AUTOSCREEN").is_ok_and(|v| v == "openers")
-            && self.autoshot.as_ref().is_some_and(|a| a.1 == 1)
-        {
-            self.screen = Screen::Openers;
+        if self.autoshot.as_ref().is_some_and(|a| a.1 == 1) {
+            match std::env::var("STACKLAB_AUTOSCREEN").as_deref() {
+                Ok("openers") => self.screen = Screen::Openers,
+                Ok("match") => self.start_match(MatchKind::Mini(1)),
+                _ => {}
+            }
         }
         let screen = std::mem::replace(&mut self.screen, Screen::Dashboard);
         self.screen = match screen {
@@ -951,6 +1365,7 @@ impl eframe::App for StackApp {
                 Screen::Loading
             }
             Screen::Play(play) => self.play_screen(ui, play),
+            Screen::Match(m) => self.match_screen(ui, m),
             Screen::Openers => {
                 let mut back = false;
                 egui::CentralPanel::default().show(ui, |ui| back = self.openers_screen(ui));

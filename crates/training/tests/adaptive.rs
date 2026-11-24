@@ -253,3 +253,27 @@ fn anchor_constant_matches_policy() {
     let p = Policy::bundled();
     assert_eq!(ANCHOR, (p.difficulty.anchor_rating, p.difficulty.anchor_rd));
 }
+
+#[test]
+fn observed_match_weakness_raises_next_cycle_weight() {
+    use stacklab_training::set::Observations;
+    let policy = Policy::bundled();
+    let mut profile = SkillProfile::new(&policy);
+    let before = profile.weights(&policy);
+    let obs = Observations {
+        pieces: 60,
+        attack: 5,
+        garbage_received: 12,
+        topped_out: true,
+        spins: 3,
+        ..Default::default()
+    };
+    profile.apply_match_observations(&[obs]);
+    let after = profile.weights(&policy);
+    assert!(after[&Module::F] > before[&Module::F], "low attack -> F");
+    assert!(
+        after[&Module::G] > before[&Module::G],
+        "garbage top-out -> G"
+    );
+    assert_eq!(after[&Module::C], before[&Module::C], "spins were used");
+}

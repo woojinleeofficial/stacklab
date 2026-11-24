@@ -250,6 +250,10 @@ impl Game {
     pub fn hold_piece(&self) -> Option<Piece> {
         self.hold
     }
+    /// Hold already used for the current piece.
+    pub fn hold_used(&self) -> bool {
+        self.hold_used
+    }
     pub fn next_pieces(&self) -> Vec<Piece> {
         self.queue
             .iter()

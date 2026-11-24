@@ -3086,6 +3086,7 @@ dependencies = [
  "eframe",
  "serde",
  "serde_json",
+ "stacklab-bot",
  "stacklab-engine",
  "stacklab-opener",
  "stacklab-store",
@@ -3097,7 +3098,10 @@ dependencies = [
 name = "stacklab-bot"
 version = "0.0.1"
 dependencies = [
+ "serde",
  "stacklab-engine",
+ "stacklab-training",
+ "toml",
 ]
 
 [[package]]

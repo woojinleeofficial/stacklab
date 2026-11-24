@@ -15,6 +15,23 @@ pub struct Policy {
     pub difficulty: DifficultyPolicy,
     pub scheduler: SchedulerPolicy,
     pub time_limits: BTreeMap<String, TimeBands>,
+    pub tl_anchor: TlAnchorPolicy,
+    #[serde(rename = "match")]
+    pub matches: MatchPolicy,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TlAnchorPolicy {
+    pub min_rd: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MatchPolicy {
+    pub mini_rounds: u32,
+    pub evaluation_first_to: u32,
+    pub win_prob_band: [f64; 2],
+    pub bot_league_min_games: u32,
+    pub bot_rd_floor: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -115,5 +132,8 @@ mod tests {
             assert!(p.time_limits.contains_key(m.policy_key()), "{m:?}");
         }
         assert_eq!(p.time_limit_secs(Module::A, 1500.0), 15);
+        assert_eq!(p.tl_anchor.min_rd, 150.0);
+        assert_eq!(p.matches.win_prob_band, [0.40, 0.60]);
+        assert_eq!(p.matches.evaluation_first_to, 2);
     }
 }

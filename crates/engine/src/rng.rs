@@ -35,7 +35,8 @@ impl Rng {
 
     /// Uniform integer in `0..n` computed as floor((next-1) * n / (M-1)) without floats.
     pub fn below(&mut self, n: u64) -> u64 {
-        (self.next_u31() - 1) * n / (M - 1)
+        // 128-bit product: exact for every n (a u64 product overflows for large n)
+        ((self.next_u31() as u128 - 1) * n as u128 / (M as u128 - 1)) as u64
     }
 
     /// True with probability `per_mille / 1000`.
@@ -87,6 +88,15 @@ impl Bag7 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn below_handles_any_range() {
+        let mut r = Rng::new(7);
+        for _ in 0..1000 {
+            assert!(r.below(u64::MAX >> 1) < u64::MAX >> 1);
+            assert!(r.below(u64::MAX) < u64::MAX);
+        }
+    }
 
     #[test]
     fn neighbouring_seeds_are_decorrelated() {

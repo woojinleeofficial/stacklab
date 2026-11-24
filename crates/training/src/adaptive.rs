@@ -106,6 +106,9 @@ pub struct SkillProfile {
     pub branch_stats: BTreeMap<String, (u32, u32)>,
     #[serde(default)]
     pub loadout: Option<stacklab_opener::loadout::OpenerLoadout>,
+    /// Weight boosts from engine-observed match weaknesses (spec 7.4), halved every cycle.
+    #[serde(default)]
+    pub observed: BTreeMap<Module, f64>,
 }
 
 impl SkillProfile {
@@ -122,6 +125,7 @@ impl SkillProfile {
             openers: BTreeMap::new(),
             branch_stats: BTreeMap::new(),
             loadout: None,
+            observed: BTreeMap::new(),
         }
     }
 
@@ -143,12 +147,20 @@ impl SkillProfile {
                 // 25 % failures and half the time used is "on target" (~1.0)
                 0.8 + 1.6 * (fail - 0.25).max(-0.125) + 0.6 * (slow - 0.5).max(0.0)
             };
+            let w = w + self.observed.get(&m).copied().unwrap_or(0.0);
             out.insert(
                 m,
                 w.clamp(policy.scheduler.weight_min, policy.scheduler.weight_max),
             );
         }
         out
+    }
+
+    /// Adds engine-observed match weaknesses to the next cycle's weights (spec 7.4).
+    pub fn apply_match_observations(&mut self, rounds: &[crate::set::Observations]) {
+        for (m, b) in crate::set::weakness_boosts(rounds) {
+            *self.observed.entry(m).or_insert(0.0) += b;
+        }
     }
 
     /// Weak sub-skills by tag (failure rate over the recent window), strongest first.
@@ -470,6 +482,11 @@ impl Cycle {
         if valid > 0 {
             profile.calibration.version += 1;
         }
+        // match observations fade: halve the boosts each cycle
+        for v in profile.observed.values_mut() {
+            *v *= 0.5;
+        }
+        profile.observed.retain(|_, v| *v > 0.01);
         CycleReport {
             before,
             after: profile.skills.clone(),

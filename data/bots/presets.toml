@@ -1,0 +1,84 @@
+# AI presets (spec 7.2): strength knobs only; ratings come from the bot league (calibration).
+# pps_milli: pieces per second x1000 (pacing between pieces)
+# input_delay_frames: reaction delay before the first key of each piece
+# depth / beam: search over current+hold and the visible Next window (never hidden pieces)
+# mistake_pm: per-mille chance to pick a random top-5 move
+# attack / downstack / safety: evaluation weights
+reference = "L3"
+
+[[preset]]
+id = "L0"
+pps_milli = 500
+input_delay_frames = 30
+depth = 0
+beam = 1
+mistake_pm = 300
+attack = 0
+downstack = 10
+safety = 10
+
+[[preset]]
+id = "L1"
+pps_milli = 800
+input_delay_frames = 20
+depth = 0
+beam = 1
+mistake_pm = 150
+attack = 15
+downstack = 20
+safety = 20
+
+[[preset]]
+id = "L2"
+pps_milli = 1100
+input_delay_frames = 14
+depth = 0
+beam = 1
+mistake_pm = 70
+attack = 30
+downstack = 30
+safety = 30
+
+[[preset]]
+id = "L3"
+pps_milli = 1400
+input_delay_frames = 10
+depth = 1
+beam = 6
+mistake_pm = 30
+attack = 45
+downstack = 30
+safety = 30
+
+[[preset]]
+id = "L4"
+pps_milli = 1800
+input_delay_frames = 7
+depth = 1
+beam = 10
+mistake_pm = 10
+attack = 60
+downstack = 35
+safety = 30
+
+[[preset]]
+id = "L5"
+pps_milli = 2300
+input_delay_frames = 5
+depth = 1
+beam = 14
+mistake_pm = 0
+attack = 75
+downstack = 35
+safety = 30
+
+[[preset]]
+id = "L6"
+pps_milli = 3000
+input_delay_frames = 3
+depth = 1
+beam = 20
+mistake_pm = 0
+attack = 90
+downstack = 40
+safety = 30

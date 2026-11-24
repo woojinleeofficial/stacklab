@@ -15,6 +15,7 @@ pub mod policy;
 pub mod problem;
 pub mod service;
 pub mod session;
+pub mod set;
 pub mod spin;
 pub mod stacking;
 pub mod validator;
