@@ -4,7 +4,7 @@
 
 ## 현재 상태
 
-- **현재 단계:** STEP 1 완료 → 다음 STEP 2(문제 프레임워크). STEP 0은 2026-11-24 사용자 확인 완료.
+- **현재 단계:** STEP 2 완료 → 다음 STEP 3(기술 영역 확대). STEP 0은 2026-11-24 사용자 확인 완료.
 - **작업 기기:** 클라우드 리눅스(Windows PC 미연결). Windows 빌드·테스트는 GitHub Actions `windows-latest`.
 - **마지막 CI 결과:** run #3 (e417209) ubuntu ✓ windows ✓ — fmt·clippy·test(release) 전부 통과. 앞선 #1·#2는 CI의 새 clippy 린트로 실패(D-027로 해결). Windows 실행 파일 아티팩트는 앱 크레이트가 생기면(STEP 2~) 추가.
 - **Windows PC에서 확인이 필요한 항목:** 없음(STEP 0). STEP 7에서 14.4 성능 항목.
@@ -16,7 +16,7 @@
 - TL-S2 수치 수집·출처 기록: `rulesets/TL-S2.toml`, `docs/RULESET_SOURCES.md`
 - 정책값: `config/policy.toml`
 - 틱 레이트·DAS/ARR 변환 규칙: DECISIONS D-004
-- DB 스키마: `docs/db/0001_init.sql` (SQLite에서 실행 확인)
+- DB 스키마: `crates/store/migrations/0001_init.sql` (SQLite에서 실행 확인)
 - 와이어프레임: `docs/WIREFRAMES.md`
 - 난이도 앵커 정의: `docs/DIFFICULTY_ANCHORS.md`
 - 오프너 범위·메타 점검: `docs/OPENER_SCOPE.md`
@@ -58,8 +58,27 @@
 - 공개 자료로 확인 못 한 룰 수치(가비지 캡·메시니스·마진·중력·락) — 사용자 리플레이로 대조 대기
 - 사용자 TETRA LEAGUE 리플레이 대조(14.1 2번째 항목의 "또는")는 리플레이 파일을 받으면 추가
 
-## 다음 단계 (STEP 2 문제 프레임워크)
-1. 문제 포맷(seed·rulesetVersion·generatorVersion·goal·witness·difficulty·fingerprint·subtypeTags), `training` 크레이트
-2. ProblemGenerator / ProblemValidator(정답 경로를 틱 엔진에서 재실행) / 캐시 / 중복 검사
-3. 피네스(입력 그래프 최단 비용, 동일 비용 복수 정답)·스태킹 생성기, 1블록 되감기
-4. `store` 크레이트(SQLite 스키마 0001)
+## STEP 2 — 문제 프레임워크
+
+### 완료
+- `crates/training`: 문제 포맷(`problem.rs`: seed·rulesetVersion·generatorVersion·validationVersion·goal·witness·difficulty·fingerprint·subtypeTags·paramBucket·제한시간), 정책 로더(`policy.rs`)
+- 판정 세션 `session.rs`: 실제 엔진으로 플레이, 목표 판정(피네스: 배치 + 최소 입력 별도 / 스태킹: 구멍·높이·Well), 제한시간, 1블록 되감기, 처음부터 재시작, 힌트, 정답 보기, MMR 유효 여부
+- 생성기: 피네스 `finesse.rs`(입력 그래프 최단 비용, 동일 비용 복수 정답), 스태킹 `stacking.rs`(9-0/6-3/7-2/자유형, Hold)
+- 검증기 `validator.rs`(정답 입력 재실행), 캐시 `cache.rs`, 출제 서비스 `service.rs`(생성 → 검증 → 최근 5문제 중복 제외 → 캐시 대체 → 다른 영역 + 진단 로그)
+- `crates/store`: SQLite 마이그레이션(트랜잭션, 실패 시 롤백), 문제·시도 저장, 슬롯 1회 집계 제약, JSON 백업/복원
+
+### 테스트
+- `training`: 출제 240문제 전부 검증 통과(5개 난이도 × A·B), 난이도 요청 반영, JSON 왕복 후 재검증, 최근 중복 제외, 캐시·다른 영역 대체, 변조 문제 거부, 피네스 동일 비용 경로 모두 인정·비최적 구분·오배치 실패, 되감기 후 보드 정확 복원·MMR 제외, 제한시간 실패
+- `store`: 스키마·룰셋 등록, 문제 왕복, 슬롯 1회 집계, 디스크 백업/복원(깨진 백업은 변경 없음), 미래 마이그레이션 데이터 보존·실패 롤백
+- 생성 보고서 `docs/reports/step2_generation.txt`: A·B 각 500개 후보 생성률 100%, 검증률 100%, 생성 시간 A < 1ms, B 평균 25~90ms
+- 워크스페이스 전체 65개 테스트 통과(release), clippy·fmt 통과
+
+### 남은 문제
+- 피네스 난이도 하한은 약 1,200(하드 드롭만으로 끝나는 문제). 더 쉬운 문제가 필요하면 STEP 3 보정에서 판단.
+- 스태킹 판정은 "보이는 Next 수"와 무관하게 전체 블록열로 해를 증명함(시야 제한은 난이도 요인으로만 사용).
+
+## 다음 단계 (STEP 3 기술 영역 확대)
+1. C 스핀·D PC(사용자 선호로 범위 확대, D-019)·F 공격·G 방어·H 판단 생성기
+2. Glicko-2(Glickman 예제 테스트), 사이클 단위 기술 MMR, 난이도 구간 보정, 시뮬레이션 사용자 정답률 75% ± 10%p 수렴
+3. 가중치 스케줄러(영역 최대 5, 최소 3영역, D 최소 2)
+4. egui 앱 골격(UI-03/04) — D-033

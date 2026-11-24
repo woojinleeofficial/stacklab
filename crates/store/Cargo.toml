@@ -1,0 +1,14 @@
+[package]
+name = "stacklab-store"
+description = "SQLite profile store: schema migrations, problems, attempts, JSON backup/restore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+stacklab-engine = { path = "../engine" }
+stacklab-training = { path = "../training" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true

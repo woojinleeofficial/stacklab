@@ -90,6 +90,8 @@ CREATE TABLE problem (
     initial_state   BLOB NOT NULL,
     goal            TEXT NOT NULL,             -- JSON
     witness         BLOB NOT NULL,             -- verified input log
+    visible_next    INTEGER NOT NULL DEFAULT 5,
+    time_limit_secs INTEGER NOT NULL DEFAULT 60,
     difficulty      REAL NOT NULL,
     param_bucket    TEXT NOT NULL,
     fingerprint     TEXT NOT NULL UNIQUE,

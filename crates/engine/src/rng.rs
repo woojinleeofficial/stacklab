@@ -5,14 +5,23 @@ use crate::piece::Piece;
 const M: u64 = 2_147_483_647;
 const A: u64 = 16_807;
 
+pub fn splitmix64(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Rng {
     state: u64,
 }
 
 impl Rng {
+    /// Seeds are scrambled with splitmix64 first: raw Park–Miller gives almost identical first
+    /// outputs for neighbouring seeds (D-028).
     pub fn new(seed: u64) -> Rng {
-        let mut s = seed % M;
+        let mut s = splitmix64(seed) % M;
         if s == 0 {
             s = 2_147_483_646;
         }
@@ -78,6 +87,16 @@ impl Bag7 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neighbouring_seeds_are_decorrelated() {
+        let firsts: Vec<u64> = (1000..1100).map(|s| Rng::new(s).below(7)).collect();
+        let mut counts = [0; 7];
+        for f in firsts {
+            counts[f as usize] += 1;
+        }
+        assert!(counts.iter().all(|&c| c >= 5), "{counts:?}");
+    }
 
     #[test]
     fn bags_are_permutations_and_deterministic() {

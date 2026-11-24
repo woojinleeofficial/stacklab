@@ -5,6 +5,8 @@ members = [
     "crates/solver",
     "crates/bot",
     "crates/opener",
+    "crates/training",
+    "crates/store",
 ]
 
 [workspace.package]
@@ -17,6 +19,7 @@ publish = false
 serde = { version = "1", features = ["derive", "rc"] }
 toml = "0.8"
 serde_json = "1"
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 [profile.release]
 debug = false
