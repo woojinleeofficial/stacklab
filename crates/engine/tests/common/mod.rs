@@ -119,6 +119,7 @@ pub fn init(rows_top_down: &[&str], queue: &str) -> InitialState {
         b2b: -1,
         combo: -1,
         continue_with_bag: true,
+        incoming: Vec::new(),
     }
 }
 

@@ -278,6 +278,7 @@ pub fn generate(
         b2b: -1,
         combo: -1,
         continue_with_bag: false,
+        incoming: Vec::new(),
     };
     let fp = fingerprint(Module::B, &initial, &goal);
     let mut tags = vec![bucket(&p)

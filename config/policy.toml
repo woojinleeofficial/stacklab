@@ -38,6 +38,8 @@ target_success = 0.75                   # initial
 jitter_rating = 120.0                   # initial: random +/- offset to avoid monotony
 bucket_rd_floor = 60.0                  # initial: calibration buckets move slowly
 anchor_rating = 1500.0                  # fixed by spec 6.2
+anchor_rd = 30.0                        # initial: anchors are the fixed scale (not calibrated)
+anchor_share = 0.15                     # initial: share of problems served from the anchor set
 
 [scheduler]
 weight_min = 0.8                        # initial

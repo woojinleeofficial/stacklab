@@ -42,6 +42,8 @@ pub struct DifficultyPolicy {
     pub jitter_rating: f64,
     pub bucket_rd_floor: f64,
     pub anchor_rating: f64,
+    pub anchor_rd: f64,
+    pub anchor_share: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

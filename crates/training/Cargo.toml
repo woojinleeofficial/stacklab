@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 stacklab-engine = { path = "../engine" }
+stacklab-solver = { path = "../solver" }
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

@@ -247,6 +247,7 @@ pub fn generate(
         b2b: -1,
         combo: -1,
         continue_with_bag: true,
+        incoming: Vec::new(),
     };
     let goal = Goal::Finesse {
         target,

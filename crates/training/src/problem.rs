@@ -93,6 +93,33 @@ pub enum Goal {
         max_height: u32,
         well: Option<u8>,
     },
+    /// Perform a spin judged by the engine (`piece` None = any piece) clearing `lines` lines
+    /// within `within_pieces` locks.
+    Spin {
+        piece: Option<Piece>,
+        spin: stacklab_engine::Spin,
+        lines: u32,
+        within_pieces: u32,
+    },
+    /// Empty the whole matrix (hidden rows included) within `within_pieces` locks.
+    PerfectClear { within_pieces: u32 },
+    /// Send at least `min_attack` lines (before cancelling) within `within_pieces` locks.
+    Attack { min_attack: u32, within_pieces: u32 },
+    /// Survive and clear at least `min_lines` lines within `pieces` locks (garbage terrain).
+    Downstack { pieces: u32, min_lines: u32 },
+    /// Quick judgment: lock the current piece at one of the accepted placements. `rated` is
+    /// false when the evaluation is not confident enough to grade a skill rating (spec 4, H).
+    Placement {
+        accepted: Vec<TargetPlacement>,
+        rated: bool,
+    },
+}
+
+impl Goal {
+    /// Whether attempts at this goal may update a skill rating.
+    pub fn rated(&self) -> bool {
+        !matches!(self, Goal::Placement { rated: false, .. })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

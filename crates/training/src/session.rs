@@ -17,6 +17,8 @@ pub enum FailReason {
         height: u32,
         well_blocked: bool,
     },
+    /// Spin / PC / attack / downstack target not reached within the allowed pieces.
+    NotAchieved,
     TimeUp,
 }
 
@@ -119,49 +121,75 @@ impl AttemptSession {
         }
         self.game.step(inputs);
         self.frames += 1;
-        let new = self.game.events();
-        for e in new {
-            let is_lock = matches!(e.kind, EventKind::PieceLock { .. });
-            let is_top = matches!(e.kind, EventKind::TopOut { .. });
+        let mut locks = 0;
+        let mut topped = false;
+        for e in self.game.events() {
+            match e.kind {
+                EventKind::PieceLock { .. } => {
+                    locks += 1;
+                    let used = self.game.stats().inputs - self.inputs_at_piece_start;
+                    self.inputs_per_piece.push(used);
+                    self.inputs_at_piece_start = self.game.stats().inputs;
+                }
+                EventKind::TopOut { .. } => topped = true,
+                _ => {}
+            }
             self.events.push(e);
-            if is_lock {
-                let used = self.game.stats().inputs - self.inputs_at_piece_start;
-                self.inputs_per_piece.push(used);
-                self.inputs_at_piece_start = self.game.stats().inputs;
-                self.checkpoints.push(self.game.snapshot());
-                self.judge_after_lock();
-            }
-            if is_top && self.status == Status::Running {
-                self.status = Status::Failed(FailReason::TopOut);
-            }
-            if self.status != Status::Running {
-                return;
-            }
         }
-        if self.frames > self.time_limit_frames() {
+        for _ in 0..locks {
+            self.checkpoints.push(self.game.snapshot());
+        }
+        if locks > 0 {
+            self.judge();
+        }
+        if topped && self.status == Status::Running {
+            self.status = Status::Failed(FailReason::TopOut);
+        }
+        if self.status == Status::Running && self.frames > self.time_limit_frames() {
             self.status = Status::Failed(FailReason::TimeUp);
         }
     }
 
-    fn judge_after_lock(&mut self) {
-        match &self.problem.goal {
+    fn locked_placements(&self) -> Vec<TargetPlacement> {
+        self.events
+            .iter()
+            .filter_map(|e| match e.kind {
+                EventKind::PieceLock { piece, rot, x, y } => {
+                    Some(TargetPlacement { piece, rot, x, y })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn judge(&mut self) {
+        let locked = self.pieces_locked() as u32;
+        let goal = self.problem.goal.clone();
+        let done_or_fail = |achieved: bool, limit: u32| {
+            if achieved {
+                Status::Success
+            } else if locked >= limit {
+                Status::Failed(FailReason::NotAchieved)
+            } else {
+                Status::Running
+            }
+        };
+        self.status = match goal {
             Goal::Finesse { target, .. } => {
-                let locked = self
-                    .events
-                    .iter()
-                    .rev()
-                    .find_map(|e| match e.kind {
-                        EventKind::PieceLock { piece, rot, x, y } => {
-                            Some(TargetPlacement { piece, rot, x, y })
-                        }
-                        _ => None,
-                    })
-                    .expect("lock event present");
-                self.status = if locked.state().cell_key() == target.state().cell_key() {
+                let first = self.locked_placements()[0];
+                if first.state().cell_key() == target.state().cell_key() {
                     Status::Success
                 } else {
                     Status::Failed(FailReason::WrongPlacement)
-                };
+                }
+            }
+            Goal::Placement { accepted, .. } => {
+                let first = self.locked_placements()[0].state().cell_key();
+                if accepted.iter().any(|a| a.state().cell_key() == first) {
+                    Status::Success
+                } else {
+                    Status::Failed(FailReason::WrongPlacement)
+                }
             }
             Goal::Stacking {
                 pieces,
@@ -169,12 +197,12 @@ impl AttemptSession {
                 max_height,
                 well,
             } => {
-                if self.pieces_locked() as u32 >= *pieces {
+                if locked >= pieces {
                     let b = self.game.board();
                     let holes = count_holes(b);
                     let height = b.height() as u32;
                     let well_blocked = well.is_some_and(|w| b.column_height(w as usize) > 0);
-                    self.status = if holes <= *max_holes && height <= *max_height && !well_blocked {
+                    if holes <= max_holes && height <= max_height && !well_blocked {
                         Status::Success
                     } else {
                         Status::Failed(FailReason::GoalNotMet {
@@ -182,10 +210,38 @@ impl AttemptSession {
                             height,
                             well_blocked,
                         })
-                    };
+                    }
+                } else {
+                    Status::Running
                 }
             }
-        }
+            Goal::Spin {
+                piece,
+                spin,
+                lines,
+                within_pieces,
+            } => {
+                let hit = self.events.iter().any(|e| {
+                    matches!(e.kind, EventKind::Spin { piece: p, spin: s, lines: l }
+                        if piece.is_none_or(|q| q == p) && s == spin && l == lines)
+                });
+                done_or_fail(hit, within_pieces)
+            }
+            Goal::PerfectClear { within_pieces } => {
+                let hit = self
+                    .events
+                    .iter()
+                    .any(|e| matches!(e.kind, EventKind::PerfectClear));
+                done_or_fail(hit, within_pieces)
+            }
+            Goal::Attack {
+                min_attack,
+                within_pieces,
+            } => done_or_fail(self.game.stats().attack >= min_attack, within_pieces),
+            Goal::Downstack { pieces, min_lines } => {
+                done_or_fail(self.game.stats().lines >= min_lines, pieces)
+            }
+        };
     }
 
     /// Undo the last locked piece (spec UI-04 "1블록 되감기"). Marks the attempt as assisted.
@@ -254,7 +310,7 @@ impl AttemptSession {
             used_hint: self.used_hint,
             used_rewind: self.used_rewind,
             used_answer: self.used_answer,
-            valid_for_mmr: !assisted && self.status != Status::Running,
+            valid_for_mmr: !assisted && self.status != Status::Running && self.problem.goal.rated(),
             elapsed_frames: self.frames,
             inputs_per_piece: self.inputs_per_piece.clone(),
             reason: match &self.status {

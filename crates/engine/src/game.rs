@@ -83,6 +83,10 @@ pub struct InitialState {
     pub combo: i32,
     /// Bag continuation after `queue`: false = only the given queue (game ends when exhausted).
     pub continue_with_bag: bool,
+    /// Garbage already pending at the start (already arrived: inserted on the next
+    /// non-clearing lock unless cancelled).
+    #[serde(default)]
+    pub incoming: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +221,14 @@ impl Game {
             };
             if !init.continue_with_bag {
                 g.bag = None;
+            }
+            for &lines in &init.incoming {
+                if lines > 0 {
+                    g.incoming.push_back(Packet {
+                        lines,
+                        active_at: 0,
+                    });
+                }
             }
         }
         g.fill_queue();

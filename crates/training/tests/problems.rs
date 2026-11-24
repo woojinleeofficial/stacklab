@@ -82,11 +82,11 @@ fn fallback_to_cache_then_other_module() {
     // generation budget 0 = immediate timeout -> cache
     let (q, src) = svc.next(Module::B, 1500.0, 1, 0).unwrap();
     assert_eq!((src, q.fingerprint), (Source::Cache, p.fingerprint));
-    // no generator and no cache for C (STEP 3) -> another module, with a diagnostic
-    let (r, src) = svc.next(Module::C, 1500.0, 1, 2).unwrap();
+    // no generator and no cache for E (openers, STEP 4) -> another module, with a diagnostic
+    let (r, src) = svc.next(Module::E, 1500.0, 1, 2).unwrap();
     assert!(matches!(src, Source::OtherModule(_)));
-    assert_ne!(r.module, Module::C);
-    assert!(svc.diagnostics.iter().any(|d| d.contains("C")));
+    assert_ne!(r.module, Module::E);
+    assert!(svc.diagnostics.iter().any(|d| d.contains("E@")));
 }
 
 #[test]
@@ -123,6 +123,7 @@ fn t_left_two() -> Problem {
         b2b: -1,
         combo: -1,
         continue_with_bag: true,
+        incoming: Vec::new(),
     };
     let goal = Goal::Finesse {
         target,
@@ -278,4 +279,23 @@ fn time_limit_fails_the_attempt() {
         s.step(&[]);
     }
     assert_eq!(*s.status(), Status::Failed(FailReason::TimeUp));
+}
+
+#[test]
+fn new_modules_serve_only_valid_problems() {
+    let mut svc = service();
+    for m in [Module::C, Module::D, Module::F, Module::G, Module::H] {
+        for (i, d) in [1250.0, 1550.0, 1850.0].iter().enumerate() {
+            for k in 0..3u64 {
+                let (p, src) = svc
+                    .next(m, *d, 90_000 + 10 * i as u64 + k, 8)
+                    .unwrap_or_else(|| panic!("{m:?}@{d}"));
+                assert_eq!(src, Source::Generated, "{m:?}@{d}: {:?}", svc.diagnostics);
+                assert_eq!(p.module, m);
+                assert!(verify(&p).valid, "{}", p.id);
+                let back = Problem::from_json(&p.to_json()).unwrap();
+                assert!(verify(&back).valid);
+            }
+        }
+    }
 }
