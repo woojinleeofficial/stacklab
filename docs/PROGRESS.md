@@ -6,7 +6,7 @@
 
 - **현재 단계:** STEP 4 완료 → 다음 STEP 5(AI·3사이클). STEP 0은 2026-11-24 사용자 확인 완료.
 - **작업 기기:** 클라우드 리눅스(Windows PC 미연결). Windows 빌드·테스트는 GitHub Actions `windows-latest`.
-- **마지막 CI 결과:** run #8 (6d63b0a, STEP 3) ubuntu ✓ windows ✓ — fmt·clippy·test·앱 빌드 통과, Windows 실행 파일 아티팩트 `stacklab-windows-x64` (약 7.6MB, 2027-02-22 만료).
+- **마지막 CI 결과:** run #10 (797ba47, STEP 4) ubuntu ✓ windows ✓ — fmt·clippy·test·앱 빌드 통과, Windows 실행 파일 아티팩트 `stacklab-windows-x64`.
 - **Windows PC에서 확인이 필요한 항목:** CI 아티팩트 stacklab.exe 실행(한글 폰트·wgpu 렌더러·키 입력). 성능 항목은 STEP 7.
 
 ## STEP 0 — 설계 확정
