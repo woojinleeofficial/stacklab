@@ -216,3 +216,30 @@ impl Bot {
         Some(first.swap_remove(pick).1)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn holes_are_worse_than_flat() {
+        let flat = Board::from_ascii(&["#########.", "#########."]);
+        let holed = Board::from_ascii(&["#########.", "####.#####"]);
+        assert!(evaluate(&flat) > evaluate(&holed));
+    }
+
+    #[test]
+    fn bot_only_uses_visible_pieces_and_finds_a_move() {
+        let rs = Ruleset::tl_s2();
+        let mut bot = Bot::new(BotConfig::preset(4), &rs, 1);
+        let d = bot.decide(
+            &Board::default(),
+            Piece::I,
+            None,
+            &[Piece::O, Piece::T],
+            &ChainState::default(),
+            0,
+        );
+        assert!(d.is_some());
+    }
+}

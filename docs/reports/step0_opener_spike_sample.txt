@@ -1,0 +1,12 @@
+shape spike-tsd-left:
+.....#....
+#..######.
+#...######
+##.#######
+finisher TSD ok = true
+sample: every 20th first-bag permutation -> 252 bags
+fullSequenceFeasible hold=false: 0/252 = 0.00%  (3.5s)
+fullSequenceFeasible hold=true: 90/252 = 35.71%  (26.2s)
+visibleInfoFeasible visible=6 hold=true: 90/252 = 35.71%  nodes=494258 (67.2s)
+visibleInfoFeasible visible=3 hold=true: 52/252 = 20.63%  nodes=253736 (36.5s)
+visibleInfoFeasible visible=2 hold=true: 12/252 = 4.76%  nodes=186618 (25.2s)

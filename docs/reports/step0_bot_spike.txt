@@ -7,3 +7,4 @@ L4      2.6     1   14    0.0%      80
 L1 vs L0: stronger wins 33/40 (82%)  implied gap +269  avg round 134s  capped 0  (2.3s)
 L2 vs L1: stronger wins 40/40 (100%)  implied gap +759  avg round 170s  capped 0  (21.0s)
 L3 vs L2: stronger wins 32/40 (80%)  implied gap +241  avg round 282s  capped 1  (89.2s)
+L4 vs L3: stronger wins 32/40 (80%)  implied gap +241  avg round 263s  capped 1  (149.1s)
