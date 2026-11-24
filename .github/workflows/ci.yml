@@ -27,3 +27,12 @@ jobs:
         run: cargo test --workspace --release
       - name: build examples
         run: cargo build --workspace --release --examples
+      - name: build app (release)
+        run: cargo build --release -p stacklab-app
+      - name: upload Windows executable
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stacklab-windows-x64
+          path: target/release/stacklab.exe
+          if-no-files-found: error

@@ -33,10 +33,24 @@ pub fn generate(
     time_limit_secs: u32,
 ) -> Option<Problem> {
     let mut rng = Rng::new(seed);
-    let rows = 3 + rng.below(7) as u32;
-    let messy = rng.chance_pm(400);
-    let incoming = [0u32, 0, 2, 4, 6][rng.below(5) as usize];
-    let pieces = 6 + rng.below(7) as u32;
+    // parameter ranges follow the requested difficulty (deeper, messier, more incoming = harder)
+    let (rows, messy, incoming, pieces) = if target_d >= 1650.0 {
+        (
+            6 + rng.below(4) as u32,
+            rng.chance_pm(800),
+            [4u32, 6, 8][rng.below(3) as usize],
+            6 + rng.below(3) as u32,
+        )
+    } else if target_d >= 1350.0 {
+        (
+            4 + rng.below(4) as u32,
+            rng.chance_pm(400),
+            [0u32, 2, 4][rng.below(3) as usize],
+            7 + rng.below(4) as u32,
+        )
+    } else {
+        (2 + rng.below(3) as u32, false, 0, 9 + rng.below(4) as u32)
+    };
     let mut b = Board::default();
     let mut hole = rng.below(WIDTH as u64) as usize;
     for row in b.rows.iter_mut().take(rows as usize) {

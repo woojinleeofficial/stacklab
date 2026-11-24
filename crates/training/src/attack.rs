@@ -22,8 +22,14 @@ pub fn generate(
     time_limit_secs: u32,
 ) -> Option<Problem> {
     let mut rng = Rng::new(seed);
-    let pieces = 6 + rng.below(7) as u32;
-    let start_b2b = [-1, -1, 1, 3, 5][rng.below(5) as usize];
+    // parameter ranges follow the requested difficulty (fewer pieces / Surge management = harder)
+    let (pieces, start_b2b) = if target_d >= 1650.0 {
+        (6 + rng.below(3) as u32, [3, 5, 7][rng.below(3) as usize])
+    } else if target_d >= 1400.0 {
+        (7 + rng.below(4) as u32, [-1, 1, 3][rng.below(3) as usize])
+    } else {
+        (9 + rng.below(4) as u32, -1)
+    };
     let well = Some(if rng.chance_pm(500) { 0 } else { 9 });
     let board = random_terrain(4 + rng.below(4) as u32, well, &mut rng);
     let mut bag = Bag7::new(seed ^ 0xa77, &rs.queue.bag_base_order);

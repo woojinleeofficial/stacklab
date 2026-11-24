@@ -8,10 +8,13 @@ use stacklab_training::problem::{Module, Problem};
 use stacklab_training::session::AttemptResult;
 use std::path::Path;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// (version, SQL). Each runs in its own transaction and must end at that `user_version`.
-pub const MIGRATIONS: &[(u32, &str)] = &[(1, include_str!("../migrations/0001_init.sql"))];
+pub const MIGRATIONS: &[(u32, &str)] = &[
+    (1, include_str!("../migrations/0001_init.sql")),
+    (2, include_str!("../migrations/0002_kv.sql")),
+];
 
 pub const BACKUP_FORMAT: u32 = 1;
 
@@ -272,6 +275,27 @@ impl Store {
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    // ----- app state (key/value JSON) -------------------------------------------------
+
+    pub fn set_state(&self, key: &str, value: &str) -> Result<()> {
+        let now = now_utc();
+        self.conn.execute(
+            "INSERT INTO app_state(key, value, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![key, value, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_state(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM app_state WHERE key = ?1", [key], |r| {
+                r.get(0)
+            })
+            .optional()?)
     }
 
     // ----- backup / restore ------------------------------------------------------------

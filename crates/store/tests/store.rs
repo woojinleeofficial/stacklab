@@ -27,7 +27,14 @@ fn count(s: &Store) -> usize {
 #[test]
 fn schema_is_migrated_and_ruleset_registered() {
     let s = Store::open_in_memory().unwrap();
-    assert_eq!(s.schema_version().unwrap(), 1);
+    assert_eq!(s.schema_version().unwrap(), 2);
+    s.set_state("profile", "{\"a\":1}").unwrap();
+    s.set_state("profile", "{\"a\":2}").unwrap();
+    assert_eq!(
+        s.get_state("profile").unwrap().as_deref(),
+        Some("{\"a\":2}")
+    );
+    assert_eq!(s.get_state("missing").unwrap(), None);
     let n: i64 = s
         .conn()
         .query_row(
@@ -105,7 +112,7 @@ fn backup_restore_roundtrip_on_disk() {
     assert_eq!(strip(&fresh.backup_json().unwrap()), strip(&backup));
     // a broken backup leaves the data untouched
     assert!(fresh
-        .restore_json("{\"schema_version\":1,\"tables\":{\"problem\":[{\"nope\":1}]}}")
+        .restore_json("{\"schema_version\":2,\"tables\":{\"problem\":[{\"nope\":1}]}}")
         .is_err());
     assert_eq!(count(&fresh), 4);
     drop(fresh);
@@ -126,10 +133,10 @@ fn future_migration_keeps_existing_data() {
     let mut conn = rusqlite::Connection::open(&path).unwrap();
     let mut list: Vec<(u32, &str)> = MIGRATIONS.to_vec();
     list.push((
-        2,
+        3,
         "ALTER TABLE problem ADD COLUMN note TEXT NOT NULL DEFAULT '';",
     ));
-    assert_eq!(migrate(&mut conn, &list).unwrap(), 2);
+    assert_eq!(migrate(&mut conn, &list).unwrap(), 3);
     let n: i64 = conn
         .query_row("SELECT COUNT(*) FROM problem WHERE note = ''", [], |r| {
             r.get(0)
@@ -138,14 +145,14 @@ fn future_migration_keeps_existing_data() {
     assert_eq!(n, 2);
     // a failing migration rolls back and keeps the previous version
     list.push((
-        3,
+        4,
         "ALTER TABLE problem ADD COLUMN bad TEXT; THIS IS NOT SQL;",
     ));
     assert!(migrate(&mut conn, &list).is_err());
     let v: u32 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v, 2);
+    assert_eq!(v, 3);
     drop(conn);
     let _ = std::fs::remove_file(&path);
 }

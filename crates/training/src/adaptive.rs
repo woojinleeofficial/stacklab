@@ -1,7 +1,7 @@
 //! Adaptive layer (spec 6): skill ratings per module, difficulty-bucket calibration,
 //! weighted scheduler and the 12-problem cycle as one Glicko-2 rating period.
 
-use crate::glicko::{rating_for_success, Outcome, Rating};
+use crate::glicko::{Outcome, Rating};
 use crate::policy::Policy;
 use crate::problem::Module;
 use crate::session::AttemptResult;
@@ -251,16 +251,39 @@ pub fn serve_anchor(policy: &Policy, rng: &mut Rng) -> bool {
     rng.below(1_000_000) < (policy.difficulty.anchor_share * 1_000_000.0) as u64
 }
 
-/// Spec 6.2: difficulty with 75 % expected success, plus jitter against monotony.
+/// Spec 6.2: difficulty with 75 % expected success, plus jitter against monotony. The centre is
+/// solved so that the success rate *averaged over the jitter* is the target (the logistic
+/// curve is not symmetric around 75 %, so plain R − 191 ± jitter lands a few points low).
 pub fn target_difficulty(profile: &SkillProfile, m: Module, policy: &Policy, rng: &mut Rng) -> f64 {
     let r = profile.skill(m);
-    let base = rating_for_success(
-        r.rating,
-        policy.difficulty.bucket_rd_floor,
-        policy.difficulty.target_success,
-    );
     let j = policy.difficulty.jitter_rating;
+    // both the user's rating and the problem's difficulty are uncertain: combine their RDs
+    let rd = (r.rd * r.rd + policy.difficulty.bucket_rd_floor.powi(2)).sqrt();
+    let base = jitter_centred(r.rating, rd, policy.difficulty.target_success, j);
     base + (rng.below(2001) as f64 / 1000.0 - 1.0) * j
+}
+
+/// Centre `d0` with mean over u ~ U[-j, j] of expected(r, d0 + u) = p (bisection).
+pub fn jitter_centred(r: f64, rd: f64, p: f64, j: f64) -> f64 {
+    let mean = |d0: f64| {
+        let n = 41;
+        (0..n)
+            .map(|i| {
+                crate::glicko::expected(r, d0 + j * (2.0 * i as f64 / (n - 1) as f64 - 1.0), rd)
+            })
+            .sum::<f64>()
+            / n as f64
+    };
+    let (mut lo, mut hi) = (r - 2000.0, r + 2000.0);
+    for _ in 0..60 {
+        let mid = (lo + hi) / 2.0;
+        if mean(mid) > p {
+            lo = mid; // still too easy -> harder
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) / 2.0
 }
 
 /// One answered slot of a cycle.

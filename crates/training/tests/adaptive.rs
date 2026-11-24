@@ -120,6 +120,8 @@ fn truth_of(m: Module) -> f64 {
 }
 
 /// Runs the simulation; returns per-cycle (successes, valid) and the final profile.
+/// Per cycle: (successes, valid) over difficulty-targeted problems only (anchors excluded:
+/// they are fixed-difficulty measurement items, not targeted at 75 %).
 pub fn simulate(seed: u64, cycles: usize) -> (Vec<(u32, u32)>, SkillProfile) {
     let policy = Policy::bundled();
     let mut profile = SkillProfile::new(&policy);
@@ -157,7 +159,8 @@ pub fn simulate(seed: u64, cycles: usize) -> (Vec<(u32, u32)>, SkillProfile) {
         let plan = plan_cycle(&profile, &policy, &mut rng);
         let mut cycle = Cycle::new(plan.clone());
         for m in plan {
-            let (bucket, snapped, true_d) = if serve_anchor(&policy, &mut rng) {
+            let anchor = serve_anchor(&policy, &mut rng);
+            let (bucket, snapped, true_d) = if anchor {
                 // anchor problems define D = 1500 on every module's scale
                 (anchor_bucket(m), 1500.0, 1500.0)
             } else {
@@ -174,7 +177,7 @@ pub fn simulate(seed: u64, cycles: usize) -> (Vec<(u32, u32)>, SkillProfile) {
             let p = expected(truth[&m], true_d, 0.0);
             let success = rng.below(10_000) < (p * 10_000.0) as u64;
             let valid = !rng.chance_pm(100); // 10 % used a hint
-            if valid {
+            if valid && !anchor {
                 tally.0 += success as u32;
                 tally.1 += 1;
             }
@@ -224,7 +227,9 @@ fn simulated_user_converges_to_target_success() {
 #[test]
 fn convergence_report() {
     let runs: Vec<Vec<(u32, u32)>> = (1..=10u64).map(|s| simulate(s, 60).0).collect();
-    println!("cycles   success rate (10 simulated users, valid attempts)");
+    println!(
+        "cycles   success rate (10 simulated users, valid targeted attempts; anchors excluded)"
+    );
     for w in 0..12 {
         let (s, n) = runs
             .iter()

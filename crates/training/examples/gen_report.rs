@@ -16,7 +16,21 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
     let svc = ProblemService::new(Arc::new(Ruleset::tl_s2()), Policy::bundled());
-    for m in [Module::A, Module::B] {
+    for m in [
+        Module::A,
+        Module::B,
+        Module::C,
+        Module::D,
+        Module::F,
+        Module::G,
+        Module::H,
+    ] {
+        // PC (4-line) and engine-exact beam searches are slower: fewer seeds there
+        let n = if matches!(m, Module::D | Module::F | Module::G | Module::H) {
+            (n / 4).max(5)
+        } else {
+            n
+        };
         println!("== module {m:?} ==");
         println!("target_D  generated  valid  mean_D  gen_ms(mean/max)  verify_ms(mean)");
         let mut tags: BTreeMap<String, u32> = BTreeMap::new();
