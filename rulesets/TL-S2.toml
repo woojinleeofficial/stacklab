@@ -1,0 +1,123 @@
+# StackLab ruleset: TETRA LEAGUE Season 2 (TL-S2)
+#
+# Every value carries a `status` in docs/RULESET_SOURCES.md:
+#   verified   = read directly from a public source listed there
+#   unverified = best-known value, not confirmed by a public source we could read.
+#                Kept configurable so it can be corrected without code changes.
+#
+# Conventions
+#   * Coordinates: x grows right (0..9), y grows UP (0 = bottom row).
+#   * Kick offsets are (dx, dy) in that y-up convention (same as the SRS tables on tetris.wiki).
+#   * Rotation states: "0" spawn, "R" after CW, "2" after two rotations, "L" after CCW.
+#   * Time unit: 1 frame = 1/60 s. Sub-frame resolution = 1/`subframes_per_frame` frame.
+#   * Fractions are stored as integers with an explicit scale so the engine never uses floats.
+
+[meta]
+version = "TL-S2"
+name = "TETRA LEAGUE Season 2"
+schema = 1
+
+[timing]
+frames_per_second = 60          # verified (passthrough section: "20 frames, or 0.333 seconds")
+subframes_per_frame = 10        # unverified (implementation choice, keeps input order inside a frame)
+
+[board]
+width = 10
+height = 40                     # total rows incl. hidden buffer (spec 3.1)
+visible_height = 20
+spawn_x = 4                     # unverified: 3-wide pieces occupy columns 3..5 (0-based)
+spawn_y = 20                    # unverified: flat side of piece in row 21 (1-based)
+
+[queue]
+randomizer = "bag7"             # verified
+next_count = 5                  # verified
+hold = true                     # verified
+bag_base_order = "ZLOSIJT"      # unverified (only matters for seed compatibility, not for rules)
+
+[gravity]
+# cells per frame, scale 1/1_000_000
+gravity_micro = 20000           # unverified (0.02 G)
+gravity_increase_micro = 0      # unverified: TL margin-time gravity increase; disabled by default
+lock_delay_frames = 30          # unverified
+lock_reset_limit = 15           # unverified (move/rotate resets before forced lock)
+
+[rotation]
+system = "SRS+"                 # verified
+# JLSTZ: standard SRS kicks (verified: tetris.wiki/SRS)
+jlstz = { "0R" = [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]], "R0" = [[0,0],[1,0],[1,-1],[0,2],[1,2]], "R2" = [[0,0],[1,0],[1,-1],[0,2],[1,2]], "2R" = [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]], "2L" = [[0,0],[1,0],[1,1],[0,-2],[1,-2]], "L2" = [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]], "L0" = [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]], "0L" = [[0,0],[1,0],[1,1],[0,-2],[1,-2]] }
+# I: TETR.IO SRS+ symmetric I kicks (verified: decoded from osk's "TETR.IO SRS+ I-kicks" chart on tetris.wiki)
+i = { "0R" = [[0,0],[1,0],[-2,0],[-2,-1],[1,2]], "R0" = [[0,0],[-1,0],[2,0],[-1,-2],[2,1]], "R2" = [[0,0],[-1,0],[2,0],[-1,2],[2,-1]], "2R" = [[0,0],[-2,0],[1,0],[-2,1],[1,-2]], "2L" = [[0,0],[2,0],[-1,0],[2,1],[-1,-2]], "L2" = [[0,0],[1,0],[-2,0],[1,2],[-2,-1]], "L0" = [[0,0],[1,0],[-2,0],[1,-2],[-2,1]], "0L" = [[0,0],[-1,0],[2,0],[2,-1],[-1,2]] }
+# 180 kicks (verified for JLSTZ: osk's "TETR.IO 180 KICK TABLE"; applied to I as well = unverified)
+r180 = { "02" = [[0,0],[0,1],[1,1],[-1,1],[1,0],[-1,0]], "20" = [[0,0],[0,-1],[-1,-1],[1,-1],[-1,0],[1,0]], "RL" = [[0,0],[1,0],[1,2],[1,1],[0,2],[0,1]], "LR" = [[0,0],[-1,0],[-1,2],[-1,1],[0,2],[0,1]] }
+i_uses_r180 = true              # unverified
+
+[spin]
+mode = "all-mini+"              # verified (Beta 1.5.0 default for multiplayer)
+t_corner_rule = true            # unverified detail: 3-corner rule, full when both front corners filled
+t_last_kick_upgrades_to_full = true   # unverified detail: SRS 5th kick (TST/fin) upgrades mini -> full
+immobile_dirs = ["left", "right", "up", "down"]  # unverified detail of the immobility check
+
+[attack]
+# lines sent by clear type at combo 0, no B2B (verified: TETR.IO combo table, column "0")
+single = 0
+double = 1
+triple = 2
+quad = 4
+tspin_mini_single = 0
+tspin_mini_double = 1
+tspin_single = 2
+tspin_double = 4
+tspin_triple = 6
+mini_triple = 2                 # unverified: non-T All-Mini+ spins that clear 3 lines
+mini_quad = 4                   # unverified: I-spin mini clearing 4 lines
+# Perfect clear (all clear)
+pc_attack = 5                   # unverified (S2 value; the wiki table's 10 is marked outdated)
+pc_b2b_add = 2                  # unverified (QUICK PLAY documents +2 B2B; assumed same in TL)
+pc_separate_attack = true       # unverified
+
+[combo]
+system = "multiplier"           # verified
+# attack = floor(base * (4 + combo) / 4)                          (verified: base*(1+0.25x), rounding DOWN)
+quarter_step = 1
+# base 0: floor(ln(1 + 1.25*combo)); stored as the smallest combo reaching each value (exact integers)
+# ln thresholds: value k reached when combo >= ceil((e^k - 1)/1.25)
+zero_base_thresholds = [2, 6, 16, 43, 118, 322]
+rounding = "down"               # verified ("Other multiplayer modes ... use DOWN mode")
+
+[b2b]
+mode = "charging"               # verified
+bonus_lines = 1                 # verified ("adds one extra line of garbage to each attack")
+surge_start_b2b = 4             # verified (displayed B2B x4)
+surge_start_lines = 4           # verified ("starting power ... 4 lines in other modes")
+surge_lines_per_level = 1       # verified
+surge_segments = 3              # verified ("splits into three segments ... remainder first")
+
+[garbage]
+travel_frames = 20              # verified ("Garbage takes 20 frames ... to travel")
+passthrough = false             # verified (removed from TETRA LEAGUE)
+cap_lines_per_piece = 8         # unverified
+hole_mode = "change-on-attack"  # verified ("notably using change on attack")
+# probabilities in per-mille (1/1000)
+messiness_within_attack_pm = 0  # unverified
+messiness_between_attacks_pm = 1000 # unverified (new hole column every attack)
+hole_change_must_differ = true  # unverified
+insert_only_on_non_clearing_lock = true  # unverified (combo blocking)
+
+[opener_phase]
+enabled = true                  # verified
+pieces = 14                     # verified
+cancel_multiplier = 2           # verified ("you cancel twice as much")
+# condition: only while lines sent this round < lines pending           (verified)
+
+[margin]
+# garbage multiplier over time. Existence in TL-S2 is unverified -> toggle.
+enabled = true                  # unverified
+margin_time_frames = 10800      # unverified (180 s)
+multiplier_start_milli = 1000   # unverified
+multiplier_increase_milli_per_second = 8  # unverified (+0.008 per second after margin)
+
+[topout]
+block_out = true                # verified (spawn overlap ends the game unless clutch)
+lock_out = false                # verified ("lock out was disabled by default")
+clutch_clear = true             # verified (Beta 1.5.0 rework)
+garbage_overflow_rows = 40      # unverified: stack pushed above row 40 by garbage = top out

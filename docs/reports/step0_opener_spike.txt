@@ -1,0 +1,7 @@
+shape spike-tsd-left:
+.....#....
+#..######.
+#...######
+##.#######
+finisher TSD ok = true
+fullSequenceFeasible hold=false: 120/5040 = 2.38%  (67.2s)

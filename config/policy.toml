@@ -1,0 +1,84 @@
+# StackLab policy values (spec ch.16). "fixed" values are product rules; the rest are
+# initial calibration values. Changing any value must bump `policy_version` and be logged in
+# docs/DECISIONS.md.
+
+policy_version = 1
+
+[ruleset]
+default = "TL-S2"                       # fixed
+
+[cycle]
+problems_per_cycle = 12                 # fixed
+cycles_per_set = 3                      # fixed
+match_order = ["mini", "mini", "bo3"]   # fixed
+target_cycle_minutes = [15, 20]         # initial
+independent_test_every_sets = 3         # initial
+
+[rating]
+system = "glicko2"                      # fixed
+initial_rating = 1500.0                 # initial
+initial_rd = 350.0                      # initial
+initial_volatility = 0.06               # initial
+tau = 0.5                               # initial
+provisional_rd = 100.0                  # initial: RD above this is shown as provisional
+rd_max = 350.0                          # TETR.IO: maximum 350 (tetris.wiki)
+rd_min = 58.0                           # TETR.IO practical floor (tetris.wiki / FAQ)
+# TETR.IO inactivity: +1 RD per day after 7 days without play (rating unchanged)
+inactivity_grace_days = 7
+inactivity_rd_per_day = 1.0
+# rating periods
+skill_period = "cycle"                  # initial
+match_period = "evaluation_set"         # initial
+
+[tl_anchor]
+min_rd = 150.0                          # initial
+
+[difficulty]
+target_success = 0.75                   # initial
+jitter_rating = 120.0                   # initial: random +/- offset to avoid monotony
+bucket_rd_floor = 60.0                  # initial: calibration buckets move slowly
+anchor_rating = 1500.0                  # fixed by spec 6.2
+
+[scheduler]
+weight_min = 0.8                        # initial
+weight_max = 1.8                        # initial
+max_per_domain = 5                      # initial
+min_domains = 3                         # initial
+recent_window_problems = 36             # initial: performance window for weights
+duplicate_window = 5                    # spec 5.3
+
+[scheduler.opener_mix]                  # share inside opener-domain problems (initial)
+primary = 70
+switch_decision = 20
+fallback = 10
+
+# Time limits in seconds per domain and difficulty band (initial; tuned so 12 problems take
+# 15-20 min including feedback). Bands: easy < 1300 <= normal < 1700 <= hard.
+[time_limits]
+A_finesse  = { easy = 20, normal = 15, hard = 10 }
+B_stacking = { easy = 120, normal = 100, hard = 80 }
+C_spin     = { easy = 60, normal = 50, hard = 40 }
+D_pc       = { easy = 90, normal = 75, hard = 60 }
+E_opener   = { easy = 60, normal = 45, hard = 35 }
+F_attack   = { easy = 120, normal = 100, hard = 80 }
+G_defense  = { easy = 120, normal = 100, hard = 80 }
+H_judgment = { easy = 20, normal = 12, hard = 8 }
+
+[match]
+mini_rounds = 1                         # fixed
+evaluation_first_to = 2                 # fixed (BO3)
+win_prob_band = [0.40, 0.60]            # initial
+bot_league_min_games = 200              # initial
+bot_rd_floor = 50.0                     # initial
+
+[recommendation]
+min_opener_attempts = 10                # initial
+min_observed_rounds = 4                 # initial
+min_score_gap = 8.0                     # initial
+confidence_level = 0.80                 # initial
+weights = { ability_fit = 35, observed = 25, complement = 20, attack_followup = 10, learning_cost = 10 }
+
+[ui]
+language = "ko"                         # fixed
+target_fps = 60                         # confirmed on Windows PC (STEP 7)
+max_input_latency_ms = 16               # confirmed on Windows PC (STEP 7)

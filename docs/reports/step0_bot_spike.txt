@@ -1,0 +1,9 @@
+preset  pps  depth beam mistake attackW
+L0      0.8     0    1   25.0%       0
+L1      1.2     0    1   10.0%      20
+L2      1.6     1    6    4.0%      40
+L3      2.0     1   10    1.0%      60
+L4      2.6     1   14    0.0%      80
+L1 vs L0: stronger wins 33/40 (82%)  implied gap +269  avg round 134s  capped 0  (2.3s)
+L2 vs L1: stronger wins 40/40 (100%)  implied gap +759  avg round 170s  capped 0  (21.0s)
+L3 vs L2: stronger wins 32/40 (80%)  implied gap +241  avg round 282s  capped 1  (89.2s)

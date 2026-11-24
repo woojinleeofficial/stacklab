@@ -1,0 +1,10 @@
+[package]
+name = "stacklab-opener"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+stacklab-engine = { path = "../engine" }
+stacklab-solver = { path = "../solver" }
