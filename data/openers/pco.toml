@@ -1,0 +1,34 @@
+# PCO (Perfect Clear Opener): first bag builds the left/right walls, the next pieces finish a
+# 4-line perfect clear (scope widened by user preference, D-019).
+# Source: Hard Drop wiki "Perfect Clear Opener" (top diagrams, with and without the I).
+
+id = "pco"
+name = "PCO"
+kind = "memorized"
+ruleset = "TL-S2"
+version = 1
+source = "https://harddrop.com/wiki/Perfect_Clear_Opener"
+mirror = true
+requirements = { finesse = 55, stacking = 40, spin = 20, pc = 80, attack = 40, defense = 30, judgment = 55, memorization = 60 }
+# 4-line PC: quad/other clear + 5 (user-confirmed TL-S2 rule), then B2B +2 (unverified)
+traits = { attack = 70, followup = 45, stability = 50, learning = 60 }
+
+[[branch]]
+id = "with-i"
+rows = [
+  "LLLI....SS",
+  "LOOI...SST",
+  "JOOI..ZZTT",
+  "JJJI...ZZT",
+]
+finisher = { pc = 4 }
+
+[[branch]]
+id = "no-i"
+rows = [
+  "LLL.....SS",
+  "LOO....SST",
+  "JOO...ZZTT",
+  "JJJ....ZZT",
+]
+finisher = { pc = 4 }

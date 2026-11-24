@@ -91,6 +91,7 @@ enum Screen {
     Dashboard,
     Loading,
     Play(Box<Playing>),
+    Openers,
 }
 
 struct StackApp {
@@ -105,6 +106,10 @@ struct StackApp {
     handling: Handling,
     last_report: Option<String>,
     autoshot: Option<(String, u32)>,
+    library: stacklab_opener::library::Library,
+    coverage: std::collections::BTreeMap<String, stacklab_opener::library::CoverageRecord>,
+    pick: (String, String),
+    opener_msg: Option<String>,
 }
 
 fn data_dir() -> std::path::PathBuf {
@@ -170,6 +175,16 @@ impl StackApp {
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(1);
         let autoshot = std::env::var("STACKLAB_AUTOSHOT").ok().map(|p| (p, 0));
+        let mut profile = profile;
+        if let Some(lo) = store.as_ref().and_then(|s| s.load_loadout().ok().flatten()) {
+            profile.loadout = Some(lo);
+        }
+        let pick = profile
+            .loadout
+            .as_ref()
+            .map_or(("tki".to_string(), "free-transition".to_string()), |l| {
+                (l.primary.clone(), l.fallback.clone())
+            });
         StackApp {
             s: Strings::korean(),
             worker: spawn_worker(rs, policy.clone(), cc.egui_ctx.clone()),
@@ -182,6 +197,10 @@ impl StackApp {
             handling: Handling::default(),
             last_report: None,
             autoshot,
+            library: stacklab_opener::library::Library::bundled(),
+            coverage: stacklab_opener::library::coverage_table(),
+            pick,
+            opener_msg: None,
         }
     }
 
@@ -272,6 +291,28 @@ impl StackApp {
             Goal::PerfectClear { within_pieces } => {
                 self.s.fmt("goal_pc", &[("n", within_pieces.to_string())])
             }
+            Goal::OpenerBuild {
+                opener,
+                pieces,
+                finisher,
+                ..
+            } => {
+                let name = self
+                    .library
+                    .get(opener)
+                    .map_or(opener.clone(), |d| d.name.clone());
+                let f = finisher.map_or(String::new(), |(p, _, l)| {
+                    let lname = ["", "Single", "Double", "Triple"][(l as usize).min(3)];
+                    self.s.fmt(
+                        "goal_opener_finisher",
+                        &[("p", p.to_char().to_string()), ("l", lname.into())],
+                    )
+                });
+                self.s.fmt(
+                    "goal_opener",
+                    &[("o", name), ("n", pieces.to_string()), ("f", f)],
+                )
+            }
             Goal::Attack {
                 min_attack,
                 within_pieces,
@@ -305,6 +346,7 @@ impl StackApp {
             Goal::Spin { .. } => self.s.get("term_tspin"),
             Goal::PerfectClear { .. } => self.s.get("term_pc"),
             Goal::Attack { .. } => self.s.get("term_b2b"),
+            Goal::OpenerBuild { .. } => self.s.get("term_opener"),
             _ => return None,
         })
     }
@@ -411,6 +453,9 @@ impl StackApp {
                 self.request_next();
             }
             ui.label(self.progress_text());
+            if ui.button(self.s.get("openers")).clicked() {
+                self.screen = Screen::Openers;
+            }
         });
         ui.label(RichText::new(self.s.get("next_match_soon")).weak());
         if let Some(r) = &self.last_report {
@@ -430,6 +475,201 @@ impl StackApp {
                 ui.end_row();
             }
         });
+    }
+
+    /// UI-07: opener management (primary / fallback, rules, coverage with scope, proficiency).
+    fn openers_screen(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut back = false;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button(self.s.get("back_to_dashboard")).clicked() {
+                    back = true;
+                }
+                ui.heading(self.s.get("openers"));
+            });
+            ui.label(self.s.get("opener_rule"));
+            if self.profile.loadout.is_none() {
+                ui.label(RichText::new(self.s.get("opener_none")).weak());
+            }
+            let names: Vec<(String, String, bool)> = self
+                .library
+                .openers
+                .iter()
+                .map(|o| {
+                    (
+                        o.id.clone(),
+                        o.name.clone(),
+                        o.kind == stacklab_opener::library::Kind::Memorized,
+                    )
+                })
+                .collect();
+            ui.horizontal(|ui| {
+                ui.label(self.s.get("opener_primary"));
+                egui::ComboBox::from_id_salt("primary")
+                    .selected_text(
+                        names
+                            .iter()
+                            .find(|n| n.0 == self.pick.0)
+                            .map_or(self.pick.0.clone(), |n| n.1.clone()),
+                    )
+                    .show_ui(ui, |ui| {
+                        for (id, name, memorized) in &names {
+                            if *memorized {
+                                ui.selectable_value(&mut self.pick.0, id.clone(), name);
+                            }
+                        }
+                    });
+                ui.label(self.s.get("opener_fallback"));
+                egui::ComboBox::from_id_salt("fallback")
+                    .selected_text(
+                        names
+                            .iter()
+                            .find(|n| n.0 == self.pick.1)
+                            .map_or(self.pick.1.clone(), |n| n.1.clone()),
+                    )
+                    .show_ui(ui, |ui| {
+                        for (id, name, _) in &names {
+                            ui.selectable_value(&mut self.pick.1, id.clone(), name);
+                        }
+                    });
+                if ui.button(self.s.get("opener_apply")).clicked() {
+                    self.apply_loadout();
+                }
+            });
+            if let Some(m) = &self.opener_msg {
+                ui.label(m);
+            }
+            ui.separator();
+            let openers = self.library.openers.clone();
+            for def in &openers {
+                let role = match &self.profile.loadout {
+                    Some(l) if l.primary == def.id => {
+                        format!(" — {}", self.s.get("opener_primary"))
+                    }
+                    Some(l) if l.fallback == def.id => {
+                        format!(" — {}", self.s.get("opener_fallback"))
+                    }
+                    _ => String::new(),
+                };
+                let kind = if def.kind == stacklab_opener::library::Kind::Memorized {
+                    self.s.get("opener_kind_memorized")
+                } else {
+                    self.s.get("opener_kind_template")
+                };
+                egui::CollapsingHeader::new(
+                    RichText::new(format!("{} ({kind}){role}", def.name)).strong(),
+                )
+                .default_open(true)
+                .id_salt(&def.id)
+                .show(ui, |ui| {
+                    if let Some(c) = self.coverage.get(&def.id) {
+                        let txt = if c.is_guaranteed() {
+                            self.s.get("opener_guaranteed")
+                        } else {
+                            self.s.fmt(
+                                "opener_coverage",
+                                &[
+                                    ("r", format!("{:.1}", 100.0 * c.rate())),
+                                    ("lo", format!("{:.1}", 100.0 * c.ci_low)),
+                                    ("hi", format!("{:.1}", 100.0 * c.ci_high)),
+                                ],
+                            )
+                        };
+                        ui.label(txt);
+                        ui.label(
+                            RichText::new(self.s.fmt("opener_scope", &[("s", c.scope.clone())]))
+                                .weak(),
+                        );
+                    }
+                    match self.profile.openers.get(&def.id) {
+                        Some(r) => ui.label(self.s.fmt(
+                            "opener_proficiency",
+                            &[
+                                ("r", format!("{:.0}", r.rating)),
+                                ("d", format!("{:.0}", r.rd)),
+                            ],
+                        )),
+                        None => ui.label(RichText::new(self.s.get("opener_unplayed")).weak()),
+                    };
+                    ui.label(
+                        RichText::new(self.s.fmt("opener_source", &[("s", def.source.clone())]))
+                            .weak(),
+                    );
+                    if !def.branches.is_empty() {
+                        ui.label(self.s.get("opener_branches"));
+                        ui.horizontal_wrapped(|ui| {
+                            for b in def.branches.iter().filter(|b| !b.mirrored) {
+                                ui.vertical(|ui| {
+                                    let (resp, painter) = ui.allocate_painter(
+                                        Vec2::new(110.0, 120.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    let rect =
+                                        Rect::from_min_size(resp.rect.min, Vec2::new(110.0, 240.0));
+                                    let clip = painter.with_clip_rect(resp.rect);
+                                    // draw only the bottom 6 rows of the field, scaled into the box
+                                    let shifted = rect.translate(Vec2::new(0.0, -120.0));
+                                    field(
+                                        &clip,
+                                        shifted,
+                                        &FieldView {
+                                            board: &b.target,
+                                            active: None,
+                                            ghost: None,
+                                            targets: vec![],
+                                            colored: b.pieces.clone(),
+                                        },
+                                    );
+                                    let (n, s) = self
+                                        .profile
+                                        .branch_stats
+                                        .get(&format!("{}/{}", def.id, b.id))
+                                        .copied()
+                                        .unwrap_or((0, 0));
+                                    ui.label(self.s.fmt(
+                                        "opener_branch_stat",
+                                        &[
+                                            ("b", b.id.clone()),
+                                            ("s", s.to_string()),
+                                            ("n", n.to_string()),
+                                        ],
+                                    ));
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+        });
+        back
+    }
+
+    fn apply_loadout(&mut self) {
+        let (p, f) = self.pick.clone();
+        let expected = self.profile.loadout.as_ref().map(|l| l.version);
+        if let Err(e) = stacklab_opener::loadout::validate(&self.library, "TL-S2", &p, &f) {
+            self.opener_msg = Some(e.to_string());
+            return;
+        }
+        let saved = match self.store.as_mut() {
+            Some(st) => st
+                .set_loadout(&p, &f, expected, "manual", None)
+                .map_err(|e| e.to_string()),
+            None => Ok(stacklab_opener::loadout::OpenerLoadout {
+                primary: p.clone(),
+                fallback: f.clone(),
+                version: expected.unwrap_or(0) + 1,
+            }),
+        };
+        match saved {
+            Ok(lo) => {
+                self.opener_msg =
+                    Some(self.s.fmt("opener_saved", &[("v", lo.version.to_string())]));
+                self.profile.loadout = Some(lo);
+                self.persist();
+            }
+            Err(e) => self.opener_msg = Some(e),
+        }
     }
 
     fn collect_inputs(&self, ui: &egui::Ui, play: &mut Playing) -> Vec<&'static str> {
@@ -630,6 +870,7 @@ impl StackApp {
                     active: game.active_piece(),
                     ghost: game.ghost(),
                     targets,
+                    colored: vec![],
                 },
             );
         });
@@ -691,11 +932,17 @@ impl eframe::App for StackApp {
         {
             self.request_next();
         }
+        if std::env::var("STACKLAB_AUTOSCREEN").is_ok_and(|v| v == "openers")
+            && self.autoshot.as_ref().is_some_and(|a| a.1 == 1)
+        {
+            self.screen = Screen::Openers;
+        }
         let screen = std::mem::replace(&mut self.screen, Screen::Dashboard);
         self.screen = match screen {
             Screen::Dashboard => {
                 egui::CentralPanel::default().show(ui, |ui| self.dashboard(ui));
-                Screen::Dashboard
+                // the dashboard's "openers" button replaces self.screen during the call
+                std::mem::replace(&mut self.screen, Screen::Dashboard)
             }
             Screen::Loading => {
                 egui::CentralPanel::default().show(ui, |ui| {
@@ -704,6 +951,15 @@ impl eframe::App for StackApp {
                 Screen::Loading
             }
             Screen::Play(play) => self.play_screen(ui, play),
+            Screen::Openers => {
+                let mut back = false;
+                egui::CentralPanel::default().show(ui, |ui| back = self.openers_screen(ui));
+                if back {
+                    Screen::Dashboard
+                } else {
+                    Screen::Openers
+                }
+            }
         };
         self.take_autoshot(ui);
     }

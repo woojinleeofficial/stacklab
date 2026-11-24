@@ -298,6 +298,91 @@ impl Store {
             .optional()?)
     }
 
+    // ----- opener loadout & history (spec 9.4/9.5, 10.3) -------------------------------
+
+    pub fn load_loadout(&self) -> Result<Option<stacklab_opener::loadout::OpenerLoadout>> {
+        Ok(self
+            .conn
+            .query_row("SELECT primary_opener_id, fallback_opener_id, version FROM opener_loadout WHERE id = 1", [], |r| {
+                Ok(stacklab_opener::loadout::OpenerLoadout { primary: r.get(0)?, fallback: r.get(1)?, version: r.get::<_, i64>(2)? as u32 })
+            })
+            .optional()?)
+    }
+
+    /// Sets the loadout atomically: version check -> validity (DB CHECK) -> change history ->
+    /// loadout row. `expected_version` = None only for the very first loadout. Opener profiles
+    /// are never touched.
+    pub fn set_loadout(
+        &mut self,
+        primary: &str,
+        fallback: &str,
+        expected_version: Option<u32>,
+        reason: &str,
+        approval_event_id: Option<&str>,
+    ) -> Result<stacklab_opener::loadout::OpenerLoadout> {
+        let tx = self.conn.transaction()?;
+        let current: Option<(String, String, i64)> = tx
+            .query_row("SELECT primary_opener_id, fallback_opener_id, version FROM opener_loadout WHERE id = 1", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?;
+        let actual = current.as_ref().map(|c| c.2 as u32);
+        if actual != expected_version {
+            return Err(StoreError::Data(format!(
+                "loadout version conflict: expected {expected_version:?}, actual {actual:?}"
+            )));
+        }
+        let version = actual.unwrap_or(0) + 1;
+        let now = now_utc();
+        let before = current.as_ref().map_or(
+            Json::Null,
+            |c| json!({"primary": c.0, "fallback": c.1, "version": c.2}),
+        );
+        let after = json!({"primary": primary, "fallback": fallback, "version": version});
+        tx.execute(
+            "INSERT INTO opener_change_history(before_json, after_json, reason, approval_event_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![before.to_string(), after.to_string(), reason, approval_event_id, now],
+        )?;
+        tx.execute(
+            "INSERT INTO opener_loadout(id, primary_opener_id, fallback_opener_id, version, updated_at, created_at) VALUES (1, ?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(id) DO UPDATE SET primary_opener_id = excluded.primary_opener_id, fallback_opener_id = excluded.fallback_opener_id,
+               version = excluded.version, updated_at = excluded.updated_at",
+            params![primary, fallback, version as i64, now],
+        )?;
+        tx.commit()?;
+        Ok(stacklab_opener::loadout::OpenerLoadout {
+            primary: primary.into(),
+            fallback: fallback.into(),
+            version,
+        })
+    }
+
+    /// Append-only role history (the role at the time is never rewritten).
+    pub fn add_opener_history(
+        &self,
+        e: &stacklab_opener::loadout::OpenerHistoryEntry,
+        ref_kind: &str,
+    ) -> Result<()> {
+        let role = match e.role_at_time {
+            stacklab_opener::loadout::Role::Primary => "primary",
+            stacklab_opener::loadout::Role::Fallback => "fallback",
+            stacklab_opener::loadout::Role::None => "none",
+        };
+        self.conn.execute(
+            "INSERT INTO opener_history(opener_id, role_at_time, ref_kind, ref_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![e.opener, role, ref_kind, e.reference, now_utc()],
+        )?;
+        Ok(())
+    }
+
+    pub fn opener_history(&self, opener: &str) -> Result<Vec<(String, String)>> {
+        let mut st = self.conn.prepare(
+            "SELECT role_at_time, ref_id FROM opener_history WHERE opener_id = ?1 ORDER BY id",
+        )?;
+        let v = st
+            .query_map([opener], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(v)
+    }
+
     // ----- backup / restore ------------------------------------------------------------
 
     fn tables(&self) -> Result<Vec<String>> {

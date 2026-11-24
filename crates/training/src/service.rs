@@ -19,6 +19,9 @@ pub enum Source {
 
 pub struct ProblemService {
     pub rs: Arc<Ruleset>,
+    pub library: stacklab_opener::library::Library,
+    /// Active opener loadout (module E needs it).
+    pub loadout: Option<stacklab_opener::loadout::OpenerLoadout>,
     rules: MoveRules,
     pub policy: Policy,
     pub cache: ProblemCache,
@@ -28,7 +31,26 @@ pub struct ProblemService {
 
 /// Modules that have a generator in this build.
 pub fn supported(m: Module) -> bool {
-    !matches!(m, Module::E)
+    // E (openers) additionally needs a loadout; generation returns None without one
+    let _ = m;
+    true
+}
+
+/// Opener role for an E slot from the policy mix (primary 70 / switch 20 / fallback 10).
+pub fn opener_role(policy: &Policy, seed: u64) -> crate::opener_gen::OpenerRole {
+    use crate::opener_gen::OpenerRole;
+    let mix = &policy.scheduler.opener_mix;
+    let p = *mix.get("primary").unwrap_or(&70) as u64;
+    let s = *mix.get("switch_decision").unwrap_or(&20) as u64;
+    let f = *mix.get("fallback").unwrap_or(&10) as u64;
+    let x = stacklab_engine::rng::Rng::new(seed ^ 0x0e0e).below(p + s + f);
+    if x < p {
+        OpenerRole::Primary
+    } else if x < p + s {
+        OpenerRole::Switch
+    } else {
+        OpenerRole::Fallback
+    }
 }
 
 impl ProblemService {
@@ -36,6 +58,8 @@ impl ProblemService {
         ProblemService {
             rules: MoveRules::from_ruleset(&rs),
             rs,
+            library: stacklab_opener::library::Library::bundled(),
+            loadout: None,
             policy,
             cache: ProblemCache::default(),
             recent: VecDeque::new(),
@@ -54,7 +78,20 @@ impl ProblemService {
             Module::F => crate::attack::generate(&self.rs, &self.rules, d, seed, tl),
             Module::G => crate::defense::generate(&self.rs, &self.rules, d, seed, tl),
             Module::H => crate::judgment::generate(&self.rs, &self.rules, d, seed, tl),
-            _ => None,
+            Module::E => {
+                let lo = self.loadout.as_ref()?;
+                let role = opener_role(&self.policy, seed);
+                crate::opener_gen::generate(
+                    &self.rs,
+                    &self.rules,
+                    &self.library,
+                    lo,
+                    role,
+                    d,
+                    seed,
+                    tl,
+                )
+            }
         }
     }
 
@@ -150,7 +187,8 @@ impl ProblemService {
         m: Module,
         rng: &mut stacklab_engine::rng::Rng,
     ) -> Option<(Problem, Source)> {
-        if crate::adaptive::serve_anchor(&self.policy, rng) {
+        self.loadout = profile.loadout.clone();
+        if m != Module::E && crate::adaptive::serve_anchor(&self.policy, rng) {
             let k = rng.below(ANCHORS_PER_MODULE);
             if let Some(p) = self.anchor(m, k) {
                 if !self.is_recent(p.fingerprint) {

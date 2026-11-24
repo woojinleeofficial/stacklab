@@ -14,6 +14,7 @@ path = "src/main.rs"
 stacklab-engine = { path = "../crates/engine" }
 stacklab-training = { path = "../crates/training" }
 stacklab-store = { path = "../crates/store" }
+stacklab-opener = { path = "../crates/opener" }
 eframe = { version = "0.37", features = ["glow"] }
 serde.workspace = true
 serde_json.workspace = true

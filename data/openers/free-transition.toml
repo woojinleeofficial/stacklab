@@ -1,0 +1,12 @@
+# Template: free-stacking transition. Goal after the first bag: flat 6-3 or 7-2 (or 9-0)
+# shape, no holes, height <= 6. Fallback only (spec 8.1).
+id = "free-transition"
+name = "자유 스태킹 전환"
+kind = "template"
+ruleset = "TL-S2"
+version = 1
+source = "StackLab template (search-verified)"
+mirror = false
+requirements = { finesse = 40, stacking = 55, spin = 20, pc = 10, attack = 30, defense = 50, judgment = 50, memorization = 5 }
+traits = { attack = 35, followup = 60, stability = 80, learning = 10 }
+template = { stack_pieces = 7, max_height = 6, max_holes = 0 }

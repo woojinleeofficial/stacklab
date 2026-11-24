@@ -98,6 +98,14 @@ pub struct SkillProfile {
     pub skills: BTreeMap<Module, Rating>,
     pub recent: VecDeque<RecentResult>,
     pub calibration: Calibration,
+    /// Opener proficiency per opener id, independent of the loadout role (spec 6.1, 9.5).
+    #[serde(default)]
+    pub openers: BTreeMap<String, Rating>,
+    /// Per-branch (attempts, successes) from decided opener problems.
+    #[serde(default)]
+    pub branch_stats: BTreeMap<String, (u32, u32)>,
+    #[serde(default)]
+    pub loadout: Option<stacklab_opener::loadout::OpenerLoadout>,
 }
 
 impl SkillProfile {
@@ -111,6 +119,9 @@ impl SkillProfile {
             skills: Module::ALL.iter().map(|&m| (m, r)).collect(),
             recent: VecDeque::new(),
             calibration: Calibration::default(),
+            openers: BTreeMap::new(),
+            branch_stats: BTreeMap::new(),
+            loadout: None,
         }
     }
 
@@ -162,11 +173,19 @@ impl SkillProfile {
     }
 }
 
-/// Modules the scheduler may use (generators available).
+/// Modules the scheduler may use: all generators; openers (E) only with a loadout.
+pub fn available_for(profile: &SkillProfile) -> Vec<Module> {
+    Module::ALL
+        .into_iter()
+        .filter(|&m| m != Module::E || profile.loadout.is_some())
+        .collect()
+}
+
+/// Modules usable before an opener loadout exists (initial diagnosis).
 pub fn available() -> Vec<Module> {
     Module::ALL
         .into_iter()
-        .filter(|&m| crate::service::supported(m))
+        .filter(|&m| m != Module::E)
         .collect()
 }
 
@@ -174,7 +193,7 @@ pub fn available() -> Vec<Module> {
 pub fn plan_cycle(profile: &SkillProfile, policy: &Policy, rng: &mut Rng) -> Vec<Module> {
     let n = policy.cycle.problems_per_cycle as usize;
     let cap = policy.scheduler.max_per_domain as usize;
-    let mods = available();
+    let mods = available_for(profile);
     let w = profile.weights(policy);
     let mut counts: BTreeMap<Module, usize> = BTreeMap::new();
     let mut plan = Vec::with_capacity(n);
@@ -391,6 +410,41 @@ impl Cycle {
         for (m, games) in per_module {
             let r = before[&m].update(&games, tau, policy.rating.rd_min, policy.rating.rd_max);
             profile.skills.insert(m, r);
+        }
+        // opener proficiency ratings (per opener, role-independent) and branch statistics
+        let mut per_opener: BTreeMap<String, Vec<Outcome>> = BTreeMap::new();
+        for r in &self.results {
+            let Some(op) = r.tags.iter().find_map(|t| t.strip_prefix("opener:")) else {
+                continue;
+            };
+            if let Some(br) = r.tags.iter().find_map(|t| t.strip_prefix("branch:")) {
+                let e = profile
+                    .branch_stats
+                    .entry(format!("{op}/{br}"))
+                    .or_default();
+                e.0 += 1;
+                e.1 += r.attempt.success as u32;
+            }
+            if r.attempt.valid_for_mmr {
+                let (d, d_rd) = profile.calibration.difficulty(&r.bucket, r.estimate);
+                let opp_rd = (d_rd * d_rd + MODEL_RD * MODEL_RD).sqrt();
+                per_opener.entry(op.to_string()).or_default().push(Outcome {
+                    opp_rating: d,
+                    opp_rd,
+                    score: if r.attempt.success { 1.0 } else { 0.0 },
+                });
+            }
+        }
+        for (op, games) in per_opener {
+            let cur = profile.openers.get(&op).copied().unwrap_or(Rating::new(
+                policy.rating.initial_rating,
+                policy.rating.initial_rd,
+                policy.rating.initial_volatility,
+            ));
+            profile.openers.insert(
+                op,
+                cur.update(&games, tau, policy.rating.rd_min, policy.rating.rd_max),
+            );
         }
         for (b, games) in per_bucket {
             if is_anchor(&b) {

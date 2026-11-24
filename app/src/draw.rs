@@ -27,6 +27,8 @@ pub struct FieldView<'a> {
     pub ghost: Option<PieceState>,
     /// Target outlines (finesse target, hint, accepted answers).
     pub targets: Vec<(PieceState, Color32)>,
+    /// Pieces drawn filled in their own colours (opener diagrams).
+    pub colored: Vec<PieceState>,
 }
 
 pub fn field(painter: &egui::Painter, rect: Rect, v: &FieldView) -> f32 {
@@ -72,6 +74,11 @@ pub fn field(painter: &egui::Painter, rect: Rect, v: &FieldView) -> f32 {
                 Stroke::new(2.5, *color),
                 StrokeKind::Inside,
             );
+        }
+    }
+    for p in &v.colored {
+        for (x, y) in p.cells() {
+            painter.rect_filled(cell_rect(x, y).shrink(1.0), 2.0, piece_color(p.piece));
         }
     }
     if let Some(g) = v.ghost {

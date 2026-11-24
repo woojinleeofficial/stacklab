@@ -1,0 +1,63 @@
+# TKI 3 (開幕TSD): first-bag T-Spin Double opener.
+# Source: Hard Drop wiki "TKI 3 Opening", section "Regular TKI 3" and "Early J setup"
+# (diagram tables transcribed 2026-11-24 with tools/; P = the T-slot in the source).
+# Rows are top to bottom, bottom row last. Letters = piece of that cell, '.' = empty.
+# Every branch is verified by the engine (tiling, reachability, finisher) in tests.
+
+id = "tki"
+name = "TKI 3"
+kind = "memorized"
+ruleset = "TL-S2"
+version = 1
+source = "https://harddrop.com/wiki/TKI_3_Opening"
+mirror = true
+# ability requirements (0-100): finesse, stacking, spin, pc, attack, defense, judgment, memorization
+requirements = { finesse = 50, stacking = 45, spin = 65, pc = 10, attack = 55, defense = 35, judgment = 40, memorization = 40 }
+# attack potential / follow-up / terrain stability / learning cost (0-100), TL-S2 attack table:
+# TSD 4 lines at B2B start; continues into TSD/TST with B2B charging.
+traits = { attack = 60, followup = 70, stability = 65, learning = 35 }
+
+[[branch]]
+id = "j-right-vertical"
+rows = [
+  ".........J",
+  ".........J",
+  "L..ZZ.S.JJ",
+  "L...ZZSSOO",
+  "LL.IIIISOO",
+]
+reserve = "T"
+finisher = { piece = "T", spin = "Full", lines = 2 }
+
+[[branch]]
+id = "j-flat-on-s-o"
+rows = [
+  ".......J..",
+  "L..ZZ.SJJJ",
+  "L...ZZSSOO",
+  "LL.IIIISOO",
+]
+reserve = "T"
+finisher = { piece = "T", spin = "Full", lines = 2 }
+
+[[branch]]
+id = "j-on-z"
+rows = [
+  "...JJJ....",
+  "L..ZZJS...",
+  "L...ZZSSOO",
+  "LL.IIIISOO",
+]
+reserve = "T"
+finisher = { piece = "T", spin = "Full", lines = 2 }
+
+[[branch]]
+id = "early-j"
+rows = [
+  "...S......",
+  "L..SSOOZZ.",
+  "L...SOOJZZ",
+  "LL.IIIIJJJ",
+]
+reserve = "T"
+finisher = { piece = "T", spin = "Full", lines = 2 }

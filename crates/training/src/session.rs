@@ -241,6 +241,40 @@ impl AttemptSession {
             Goal::Downstack { pieces, min_lines } => {
                 done_or_fail(self.game.stats().lines >= min_lines, pieces)
             }
+            Goal::OpenerBuild {
+                accepted,
+                pieces,
+                finisher,
+                ..
+            } => {
+                if locked == pieces {
+                    let rows = &self.game.board().rows;
+                    let hit = accepted.iter().any(|a| {
+                        a.rows.iter().enumerate().all(|(y, r)| rows[y] == *r)
+                            && rows[a.rows.len()..].iter().all(|r| *r == 0)
+                    });
+                    if !hit {
+                        Status::Failed(FailReason::WrongPlacement)
+                    } else if finisher.is_none() {
+                        Status::Success
+                    } else {
+                        Status::Running
+                    }
+                } else if locked > pieces {
+                    let (p, sp, l) = finisher.expect("finisher present after the shape");
+                    let hit = self.events.iter().any(|e| {
+                        matches!(e.kind, EventKind::Spin { piece, spin, lines }
+                            if piece == p && spin == sp && lines == l)
+                    });
+                    if hit {
+                        Status::Success
+                    } else {
+                        Status::Failed(FailReason::NotAchieved)
+                    }
+                } else {
+                    Status::Running
+                }
+            }
         };
     }
 

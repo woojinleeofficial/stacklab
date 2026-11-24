@@ -107,6 +107,14 @@ pub enum Goal {
     Attack { min_attack: u32, within_pieces: u32 },
     /// Survive and clear at least `min_lines` lines within `pieces` locks (garbage terrain).
     Downstack { pieces: u32, min_lines: u32 },
+    /// Opener execution (module E): after exactly `pieces` locks the field must equal one of the
+    /// accepted branch shapes; with a spin finisher the next lock must perform it.
+    OpenerBuild {
+        opener: String,
+        accepted: Vec<OpenerShape>,
+        pieces: u32,
+        finisher: Option<(Piece, stacklab_engine::Spin, u32)>,
+    },
     /// Quick judgment: lock the current piece at one of the accepted placements. `rated` is
     /// false when the evaluation is not confident enough to grade a skill rating (spec 4, H).
     Placement {
@@ -120,6 +128,13 @@ impl Goal {
     pub fn rated(&self) -> bool {
         !matches!(self, Goal::Placement { rated: false, .. })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenerShape {
+    pub branch: String,
+    /// Bottom-up rows of the finished shape.
+    pub rows: Vec<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

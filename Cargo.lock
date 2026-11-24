@@ -3087,6 +3087,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stacklab-engine",
+ "stacklab-opener",
  "stacklab-store",
  "stacklab-training",
  "toml",
@@ -3112,8 +3113,10 @@ dependencies = [
 name = "stacklab-opener"
 version = "0.0.1"
 dependencies = [
+ "serde",
  "stacklab-engine",
  "stacklab-solver",
+ "toml",
 ]
 
 [[package]]
@@ -3131,6 +3134,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stacklab-engine",
+ "stacklab-opener",
  "stacklab-training",
 ]
 
@@ -3141,6 +3145,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stacklab-engine",
+ "stacklab-opener",
  "stacklab-solver",
  "toml",
 ]

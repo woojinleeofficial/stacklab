@@ -7,6 +7,10 @@
 //!
 //! The full branch-graph library (TKI / DT Cannon / PCO / free-stacking template) is STEP 4.
 
+pub mod feasibility;
+pub mod library;
+pub mod loadout;
+
 use stacklab_engine::board::Board;
 use stacklab_engine::{lock, placements, MoveRules, Piece, Rot, Spin};
 use stacklab_solver::fill::{inside, remaining, reserve_available};

@@ -156,3 +156,60 @@ fn future_migration_keeps_existing_data() {
     drop(conn);
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn loadout_changes_are_versioned_and_history_keeps_roles() {
+    use stacklab_opener::loadout::{OpenerHistoryEntry, Role};
+    let mut s = Store::open_in_memory().unwrap();
+    assert!(s.load_loadout().unwrap().is_none());
+    let lo = s
+        .set_loadout("tki", "free-transition", None, "initial", None)
+        .unwrap();
+    assert_eq!(lo.version, 1);
+    s.add_opener_history(
+        &OpenerHistoryEntry {
+            opener: "tki".into(),
+            role_at_time: Role::Primary,
+            reference: "attempt-1".into(),
+        },
+        "attempt",
+    )
+    .unwrap();
+    // stale version is rejected and changes nothing
+    assert!(s
+        .set_loadout("pco", "tki", Some(5), "manual", None)
+        .is_err());
+    assert_eq!(s.load_loadout().unwrap().unwrap().primary, "tki");
+    // same opener twice violates the DB invariant
+    assert!(s
+        .set_loadout("tki", "tki", Some(1), "manual", None)
+        .is_err());
+    let lo = s
+        .set_loadout("pco", "tki", Some(1), "manual", None)
+        .unwrap();
+    assert_eq!((lo.primary.as_str(), lo.version), ("pco", 2));
+    s.add_opener_history(
+        &OpenerHistoryEntry {
+            opener: "tki".into(),
+            role_at_time: Role::Fallback,
+            reference: "attempt-2".into(),
+        },
+        "attempt",
+    )
+    .unwrap();
+    // the earlier role is not retroactively changed
+    assert_eq!(
+        s.opener_history("tki").unwrap(),
+        vec![
+            ("primary".into(), "attempt-1".into()),
+            ("fallback".into(), "attempt-2".into())
+        ]
+    );
+    let n: i64 = s
+        .conn()
+        .query_row("SELECT COUNT(*) FROM opener_change_history", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(n, 2, "failed changes leave no history");
+}

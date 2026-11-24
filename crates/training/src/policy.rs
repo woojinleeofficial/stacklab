@@ -56,6 +56,8 @@ pub struct SchedulerPolicy {
     pub duplicate_window: usize,
     #[serde(default)]
     pub domain_floor: BTreeMap<String, u32>,
+    #[serde(default)]
+    pub opener_mix: BTreeMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]

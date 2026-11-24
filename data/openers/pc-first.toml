@@ -1,0 +1,12 @@
+# Template: any first perfect clear from an empty field (4 lines, up to 10 pieces).
+# Not a memorized shape: the solver proves a path for the visible pieces (D-019).
+id = "pc-first"
+name = "PC 우선 (범용)"
+kind = "template"
+ruleset = "TL-S2"
+version = 1
+source = "StackLab template (solver-verified)"
+mirror = false
+requirements = { finesse = 50, stacking = 40, spin = 15, pc = 85, attack = 35, defense = 30, judgment = 70, memorization = 20 }
+traits = { attack = 65, followup = 40, stability = 45, learning = 50 }
+template = { pc = 4, pieces = 10 }

@@ -9,6 +9,7 @@ pub mod finesse;
 pub mod gen_common;
 pub mod glicko;
 pub mod judgment;
+pub mod opener_gen;
 pub mod pcgen;
 pub mod policy;
 pub mod problem;
