@@ -34,6 +34,8 @@ pub struct Meta {
 pub struct Timing {
     pub frames_per_second: u32,
     pub subframes_per_frame: u32,
+    pub are_frames: u32,
+    pub line_clear_are_frames: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,6 +61,8 @@ pub struct GravityCfg {
     pub gravity_increase_micro: u32,
     pub lock_delay_frames: u32,
     pub lock_reset_limit: u32,
+    pub reset_count_restores_on_new_low: bool,
+    pub soft_drop_min_micro: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -205,6 +209,9 @@ impl Ruleset {
             if self.rotation.r180.get(key).is_none_or(|v| v.is_empty()) {
                 return Err(RulesetError::Invalid(format!("missing r180.{key}")));
             }
+        }
+        if self.timing.subframes_per_frame == 0 || self.timing.frames_per_second == 0 {
+            return Err(RulesetError::Invalid("timing must be > 0".into()));
         }
         if self.b2b.surge_segments == 0 {
             return Err(RulesetError::Invalid("surge_segments must be > 0".into()));

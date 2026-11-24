@@ -214,3 +214,107 @@ mod tests {
         assert_eq!(res.lines, 2);
     }
 }
+
+/// Player-level moves used for witness paths (infinite SDF: soft drop = sonic drop).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum Move {
+    Left,
+    Right,
+    Cw,
+    Ccw,
+    Flip,
+    Sonic,
+}
+
+fn apply_move(
+    board: &Board,
+    rules: &MoveRules,
+    s: &PieceState,
+    m: Move,
+) -> Option<(PieceState, Option<(u8, usize)>)> {
+    match m {
+        Move::Left | Move::Right => {
+            let n = s.shifted(if m == Move::Left { -1 } else { 1 }, 0);
+            board.fits(&n).then_some((n, None))
+        }
+        Move::Sonic => {
+            let n = board.drop_y(s);
+            (n != *s).then_some((n, None))
+        }
+        Move::Cw | Move::Ccw | Move::Flip => {
+            let dir = match m {
+                Move::Cw => RotDir::Cw,
+                Move::Ccw => RotDir::Ccw,
+                _ => RotDir::Flip,
+            };
+            rules.kicks.try_rotate(board, s, dir).map(|(n, k)| {
+                let kc = rules.kicks.kick_count(s.piece, s.rot, n.rot);
+                (n, Some((k, kc)))
+            })
+        }
+    }
+}
+
+/// Shortest move sequence (fewest moves) from spawn that ends exactly in `target.state`
+/// (same cells) with the same spin classification. The caller adds the hard drop.
+pub fn find_path(board: &Board, target: &Placement, rules: &MoveRules) -> Option<Vec<Move>> {
+    const MOVES: [Move; 6] = [
+        Move::Left,
+        Move::Right,
+        Move::Cw,
+        Move::Ccw,
+        Move::Flip,
+        Move::Sonic,
+    ];
+    let start = rules.spawn(target.state.piece);
+    if !board.fits(&start) {
+        return None;
+    }
+    let key = target.state.cell_key();
+    let n = 4 * XS * YS;
+    let mut parent: Vec<Option<(usize, Move)>> = vec![None; n];
+    let mut seen = vec![false; n];
+    let mut states: Vec<Option<PieceState>> = vec![None; n];
+    let si = idx(&start)?;
+    seen[si] = true;
+    states[si] = Some(start);
+    let mut q = VecDeque::from([start]);
+    let path_to = |mut i: usize, parent: &Vec<Option<(usize, Move)>>| {
+        let mut v = Vec::new();
+        while let Some((p, m)) = parent[i] {
+            v.push(m);
+            i = p;
+        }
+        v.reverse();
+        v
+    };
+    // the spawn state itself may already be the target (no spin possible there)
+    if start.cell_key() == key && board.grounded(&start) && target.spin == Spin::None {
+        return Some(Vec::new());
+    }
+    while let Some(s) = q.pop_front() {
+        let si = idx(&s)?;
+        for m in MOVES {
+            let Some((ns, rot)) = apply_move(board, rules, &s, m) else {
+                continue;
+            };
+            if ns.cell_key() == key && board.grounded(&ns) {
+                let spin = rules.spins.detect(board, &ns, rot);
+                if spin == target.spin {
+                    let mut v = path_to(si, &parent);
+                    v.push(m);
+                    return Some(v);
+                }
+            }
+            if let Some(ni) = idx(&ns) {
+                if !seen[ni] {
+                    seen[ni] = true;
+                    states[ni] = Some(ns);
+                    parent[ni] = Some((si, m));
+                    q.push_back(ns);
+                }
+            }
+        }
+    }
+    None
+}

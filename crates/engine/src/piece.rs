@@ -1,6 +1,8 @@
 //! Tetromino kinds, rotation states and cell shapes (y-up, relative to the rotation centre).
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Piece {
     I,
     O,
@@ -62,7 +64,9 @@ pub fn parse_queue(s: &str) -> Vec<Piece> {
     s.chars().filter_map(Piece::from_char).collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Rot {
     N = 0,
     E = 1,

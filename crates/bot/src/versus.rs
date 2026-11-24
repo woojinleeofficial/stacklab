@@ -73,15 +73,6 @@ pub struct MatchResult {
     pub capped: bool,
 }
 
-fn margin_multiplier_milli(rs: &Ruleset, frame: u64) -> u64 {
-    let m = &rs.margin;
-    if !m.enabled || frame <= m.margin_time_frames as u64 {
-        return m.multiplier_start_milli as u64;
-    }
-    let secs = (frame - m.margin_time_frames as u64) / rs.timing.frames_per_second as u64;
-    m.multiplier_start_milli as u64 + secs * m.multiplier_increase_milli_per_second as u64
-}
-
 /// Plays one round until a player tops out.
 pub fn play_round(
     a: BotConfig,
@@ -155,7 +146,7 @@ pub fn play_round(
             },
         );
         me.pieces += 1;
-        let mult = margin_multiplier_milli(rs, now);
+        let mult = stacklab_engine::attack::margin_multiplier_milli(rs, now);
         let mut out: u32 = atk
             .packets
             .iter()

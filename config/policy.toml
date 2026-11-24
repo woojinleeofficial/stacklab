@@ -47,6 +47,9 @@ min_domains = 3                         # initial
 recent_window_problems = 36             # initial: performance window for weights
 duplicate_window = 5                    # spec 5.3
 
+[scheduler.domain_floor]               # user preference (D-019): minimum problems per cycle
+D = 2
+
 [scheduler.opener_mix]                  # share inside opener-domain problems (initial)
 primary = 70
 switch_decision = 20

@@ -20,6 +20,8 @@ schema = 1
 [timing]
 frames_per_second = 60          # verified (passthrough section: "20 frames, or 0.333 seconds")
 subframes_per_frame = 10        # unverified (implementation choice, keeps input order inside a frame)
+are_frames = 0                  # unverified: entry delay after a lock
+line_clear_are_frames = 0       # unverified: extra delay after a line clear
 
 [board]
 width = 10
@@ -40,6 +42,8 @@ gravity_micro = 20000           # unverified (0.02 G)
 gravity_increase_micro = 0      # unverified: TL margin-time gravity increase; disabled by default
 lock_delay_frames = 30          # unverified
 lock_reset_limit = 15           # unverified (move/rotate resets before forced lock)
+reset_count_restores_on_new_low = true  # unverified: reaching a new lowest row restores resets
+soft_drop_min_micro = 20000     # unverified: soft drop speed = max(gravity, this) * SDF
 
 [rotation]
 system = "SRS+"                 # verified
@@ -71,9 +75,9 @@ tspin_triple = 6
 mini_triple = 2                 # unverified: non-T All-Mini+ spins that clear 3 lines
 mini_quad = 4                   # unverified: I-spin mini clearing 4 lines
 # Perfect clear (all clear)
-pc_attack = 5                   # unverified (S2 value; the wiki table's 10 is marked outdated)
+pc_attack = 5                   # user-confirmed (2026-11-24): PC adds 5 on top of the clear's own attack (quad PC = 4+5 = 9, TSD PC = 4+5 = 9)
 pc_b2b_add = 2                  # unverified (QUICK PLAY documents +2 B2B; assumed same in TL)
-pc_separate_attack = true       # unverified
+pc_separate_attack = true       # unverified (total is the same either way; only packet split differs)
 
 [combo]
 system = "multiplier"           # verified

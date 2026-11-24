@@ -78,6 +78,17 @@ pub fn combo_attack(rs: &Ruleset, base: u32, combo: i32) -> u32 {
     }
 }
 
+/// Attack multiplier (1/1000) after `tick` frames: constant until margin time, then rising
+/// linearly per whole second (TL-S2 existence unverified, see ruleset `[margin]`).
+pub fn margin_multiplier_milli(rs: &Ruleset, tick: u64) -> u64 {
+    let m = &rs.margin;
+    if !m.enabled || tick <= m.margin_time_frames as u64 {
+        return m.multiplier_start_milli as u64;
+    }
+    let secs = (tick - m.margin_time_frames as u64) / rs.timing.frames_per_second as u64;
+    m.multiplier_start_milli as u64 + secs * m.multiplier_increase_milli_per_second as u64
+}
+
 pub fn surge_amount(rs: &Ruleset, b2b: i32) -> u32 {
     let start = rs.b2b.surge_start_b2b as i32;
     if b2b < start {
@@ -205,6 +216,16 @@ mod tests {
         assert_eq!(r.surge_released, 8);
         assert_eq!(r.packets, vec![1, 3, 3, 2]);
         assert_eq!(ch.b2b, -1);
+    }
+
+    #[test]
+    fn margin_multiplier_ramps_after_margin_time() {
+        let mut rs = Ruleset::tl_s2();
+        assert_eq!(margin_multiplier_milli(&rs, 0), 1000);
+        assert_eq!(margin_multiplier_milli(&rs, 10_800), 1000);
+        assert_eq!(margin_multiplier_milli(&rs, 10_800 + 60 * 125), 2000);
+        rs.margin.enabled = false;
+        assert_eq!(margin_multiplier_milli(&rs, 10_800 + 60 * 125), 1000);
     }
 
     #[test]

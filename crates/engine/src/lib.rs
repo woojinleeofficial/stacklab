@@ -1,16 +1,21 @@
 //! StackLab engine core.
 //!
-//! STEP 0 scope: rules data, board, SRS+ rotation, All-Mini+ spin detection, attack
-//! calculation, deterministic 7-bag, reachable-placement generation. The fixed-tick game loop,
-//! garbage queue, replay and event log are added in STEP 1 on top of these modules.
+//! Rules data, board, SRS+ rotation, All-Mini+ spins, attack (combo, B2B charging, Surge, PC),
+//! deterministic 7-bag, reachable placements and witness paths, the fixed-tick [`game::Game`]
+//! (handling, gravity, lock delay, hold, garbage, clutch, top-out, 40-line mode), engine events,
+//! replays and the two-player [`versus::Versus`]. No UI or OS dependencies, integers only.
 
 pub mod attack;
 pub mod board;
+pub mod events;
+pub mod game;
 pub mod movegen;
 pub mod piece;
+pub mod replay;
 pub mod rng;
 pub mod rotation;
 pub mod ruleset;
+pub mod versus;
 
 pub use board::{Board, PieceState};
 pub use movegen::{lock, placements, MoveRules, Placement};

@@ -6,6 +6,7 @@
 
 | ID | 자료 | 접근 결과 |
 |----|------|-----------|
+| U1 | 사용자 확인 (2026-11-24, STEP 0 확인 지점) | PC 공격량 |
 | S1 | tetris.wiki — "TETR.IO" 문서 (Mechanics 절: Multiplier 콤보, B2B Charging, All-Mini+, Clutch Clear, Opener Phase, Passthrough) | 읽음 |
 | S2 | tetris.wiki — "SRS" 문서 (JLSTZ·I 표준 킥 표) | 읽음 |
 | S3 | tetris.wiki 이미지 `TETR.IO_180kicks.png` (osk 게시 "TETR.IO 180 KICK TABLE") | 이미지 판독 |
@@ -36,7 +37,7 @@
 | 고정(immobile) 판정 방향 | 좌·우·위·아래 | unverified | |
 | 공격표 | S0/D1/T2/Q4, TSMS0/TSS2/TSMD1/TSD4/TST6 | verified | S5 콤보 0 열 |
 | 비T Mini 3·4줄 | 2 / 4 | unverified | |
-| PC(All Clear) 공격 | 5줄, 별도 공격, B2B +2 | **unverified** | S1은 표의 PC 값(10)이 "outdated"라고만 하고, QUICK PLAY는 "3 lines but add +2 B2B"라고 명시. TL 값은 미확인 |
+| PC(All Clear) 공격 | 클리어 자체 공격 + 5줄 (예: Quad PC 4+5=9, TSD PC 4+5=9) | **user-confirmed** (2026-11-24) — B2B +2와 패킷 분리 여부는 unverified | S1은 표의 PC 값(10)이 "outdated"라고만 하고, QUICK PLAY는 "3 lines but add +2 B2B"라고 명시. TL 값은 미확인 |
 | 콤보 | Multiplier: base×(1+0.25×combo), base 0이면 ln(1+1.25×combo) (2콤보 이상), 내림 | verified | S1 + S5로 0~20 콤보 전 구간 대조 (테스트 `combo_table_matches_public_chart`) |
 | B2B | Charging: 연속 어려운 클리어마다 +1줄 | verified | S1 |
 | Surge | B2B 4부터 충전, 시작 4줄(QP 제외), 레벨당 +1, 끊길 때 3분할(나머지는 앞쪽부터) | verified | S1 |
@@ -59,4 +60,4 @@
 
 1. 모든 미확인 값은 `rulesets/TL-S2.toml`에서 바로 바꿀 수 있고, 엔진 코드에는 수치가 없다.
 2. STEP 1의 14.1 "공격량 대조" 항목은 확인된 값(공격표·콤보·B2B·Surge·오프너 페이즈)으로 먼저 픽스처를 만든다.
-3. 미확인 값은 사용자가 TETRA LEAGUE 리플레이(.ttrm)나 확인된 수치를 주면 대조해서 `verified`로 바꾼다. 우선순위: PC 공격량 → 가비지 캡·메시니스 → 마진 타임 → 중력·락 딜레이.
+3. 미확인 값은 사용자가 TETRA LEAGUE 리플레이(.ttrm)나 확인된 수치를 주면 대조해서 `verified`로 바꾼다. 우선순위: 가비지 캡·메시니스 → 마진 타임 → 중력·락 딜레이.
