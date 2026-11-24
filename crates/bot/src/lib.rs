@@ -218,8 +218,8 @@ impl Bot {
         first.sort_by_key(|c| std::cmp::Reverse(c.0));
         if self.cfg.depth >= 1 && !v.next.is_empty() {
             let beam = self.cfg.beam.min(first.len());
-            for i in 0..beam {
-                let (_, _, ref nb, ref ch, nhold, consumed) = first[i];
+            for cand in first.iter_mut().take(beam) {
+                let (_, _, ref nb, ref ch, nhold, consumed) = *cand;
                 let rest = &v.next[consumed..];
                 let Some((&cur2, after)) = rest.split_first() else {
                     continue;
@@ -231,7 +231,7 @@ impl Bot {
                     }
                 }
                 if best2 > i32::MIN {
-                    first[i].0 = (first[i].0 + best2) / 2;
+                    cand.0 = (cand.0 + best2) / 2;
                 }
             }
             first[..beam].sort_by_key(|c| std::cmp::Reverse(c.0));
