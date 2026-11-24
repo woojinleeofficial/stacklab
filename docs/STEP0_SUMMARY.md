@@ -83,7 +83,7 @@ UI-01~09 전부: [`WIREFRAMES.md`](WIREFRAMES.md)
 - **D-013** Glicko-2 직접 구현, 미사용 RD 증가는 TETR.IO 방식
 - **D-015** PC 공격량 5줄 + B2B 2 가정
 
-기타 산출물: DB 스키마 [`db/0001_init.sql`](db/0001_init.sql)(테이블 20개, SQLite 실행 확인), 정책값 [`../config/policy.toml`](../config/policy.toml), 난이도 앵커 [`DIFFICULTY_ANCHORS.md`](DIFFICULTY_ANCHORS.md), CI(리눅스·Windows).
+기타 산출물: DB 스키마 [`db/0001_init.sql`](db/0001_init.sql)(테이블 22개, SQLite 실행 확인), 정책값 [`../config/policy.toml`](../config/policy.toml), 난이도 앵커 [`DIFFICULTY_ANCHORS.md`](DIFFICULTY_ANCHORS.md), CI(리눅스·Windows).
 
 ## 7. 품질 게이트
 
