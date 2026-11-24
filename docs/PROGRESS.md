@@ -6,7 +6,7 @@
 
 - **현재 단계:** STEP 1 완료 → 다음 STEP 2(문제 프레임워크). STEP 0은 2026-11-24 사용자 확인 완료.
 - **작업 기기:** 클라우드 리눅스(Windows PC 미연결). Windows 빌드·테스트는 GitHub Actions `windows-latest`.
-- **마지막 CI 결과:** 1차(STEP 0 커밋) 실패 — CI의 새 clippy 린트. 툴체인 1.100.0 고정 후 재실행(D-027)...
+- **마지막 CI 결과:** run #3 (e417209) ubuntu ✓ windows ✓ — fmt·clippy·test(release) 전부 통과. 앞선 #1·#2는 CI의 새 clippy 린트로 실패(D-027로 해결). Windows 실행 파일 아티팩트는 앱 크레이트가 생기면(STEP 2~) 추가.
 - **Windows PC에서 확인이 필요한 항목:** 없음(STEP 0). STEP 7에서 14.4 성능 항목.
 
 ## STEP 0 — 설계 확정
