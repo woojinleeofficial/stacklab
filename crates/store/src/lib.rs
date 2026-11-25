@@ -8,12 +8,13 @@ use stacklab_training::problem::{Module, Problem};
 use stacklab_training::session::AttemptResult;
 use std::path::Path;
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// (version, SQL). Each runs in its own transaction and must end at that `user_version`.
 pub const MIGRATIONS: &[(u32, &str)] = &[
     (1, include_str!("../migrations/0001_init.sql")),
     (2, include_str!("../migrations/0002_kv.sql")),
+    (3, include_str!("../migrations/0003_recommendation.sql")),
 ];
 
 pub const BACKUP_FORMAT: u32 = 1;
@@ -42,6 +43,18 @@ impl From<rusqlite::Error> for StoreError {
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApplyOutcome {
+    Applied(stacklab_opener::loadout::OpenerLoadout),
+    /// Same event applied before: nothing changed (duplicate click).
+    AlreadyApplied,
+    /// The loadout changed since the analysis: a new approval is required (spec 11).
+    Conflict {
+        current_version: u32,
+        event_version: u32,
+    },
+}
 
 /// UTC timestamp `YYYY-MM-DDTHH:MM:SSZ` without external crates.
 pub fn now_utc() -> String {
@@ -381,6 +394,175 @@ impl Store {
             .query_map([opener], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(v)
+    }
+
+    // ----- opener recommendation (spec 9.3 / 9.4) ---------------------------------------
+
+    /// Inserts an event. A second automatic event violates the unique index and fails.
+    pub fn create_recommendation(
+        &self,
+        e: &stacklab_training::recommend::RecommendationEvent,
+    ) -> Result<()> {
+        let now = now_utc();
+        self.conn.execute(
+            "INSERT INTO opener_recommendation(event_id, trigger_evaluation_id, is_automatic, status, analysis_json, source_loadout_version, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![
+                e.event_id,
+                e.trigger_evaluation_id,
+                e.automatic as i64,
+                e.status.as_str(),
+                e.analysis.as_ref().map(|a| serde_json::to_string(a).expect("analysis serialises")),
+                e.source_loadout_version as i64,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn has_automatic_recommendation(&self) -> Result<bool> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM opener_recommendation WHERE is_automatic = 1",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
+    fn row_to_event(
+        r: &rusqlite::Row,
+    ) -> rusqlite::Result<stacklab_training::recommend::RecommendationEvent> {
+        let status: String = r.get("status")?;
+        let analysis: Option<String> = r.get("analysis_json")?;
+        Ok(stacklab_training::recommend::RecommendationEvent {
+            event_id: r.get("event_id")?,
+            trigger_evaluation_id: r.get("trigger_evaluation_id")?,
+            automatic: r.get::<_, i64>("is_automatic")? == 1,
+            status: stacklab_training::recommend::RecStatus::parse(&status)
+                .unwrap_or(stacklab_training::recommend::RecStatus::Unavailable),
+            analysis: analysis.and_then(|a| serde_json::from_str(&a).ok()),
+            source_loadout_version: r.get::<_, i64>("source_loadout_version")? as u32,
+        })
+    }
+
+    pub fn load_recommendation(
+        &self,
+        event_id: &str,
+    ) -> Result<Option<stacklab_training::recommend::RecommendationEvent>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT * FROM opener_recommendation WHERE event_id = ?1",
+                [event_id],
+                Self::row_to_event,
+            )
+            .optional()?)
+    }
+
+    pub fn list_recommendations(
+        &self,
+    ) -> Result<Vec<stacklab_training::recommend::RecommendationEvent>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT * FROM opener_recommendation ORDER BY created_at, rowid")?;
+        let v = st
+            .query_map([], Self::row_to_event)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(v)
+    }
+
+    /// Saves status + analysis after a state-machine transition done in memory.
+    pub fn save_recommendation(
+        &self,
+        e: &stacklab_training::recommend::RecommendationEvent,
+    ) -> Result<()> {
+        let prev = self
+            .load_recommendation(&e.event_id)?
+            .ok_or_else(|| StoreError::Data("unknown recommendation".into()))?;
+        if prev.status != e.status && !prev.status.can_go(e.status) {
+            return Err(StoreError::Data(format!(
+                "illegal transition {} -> {}",
+                prev.status.as_str(),
+                e.status.as_str()
+            )));
+        }
+        self.conn.execute(
+            "UPDATE opener_recommendation SET status = ?2, analysis_json = ?3, updated_at = ?4 WHERE event_id = ?1",
+            params![e.event_id, e.status.as_str(), e.analysis.as_ref().map(|a| serde_json::to_string(a).expect("analysis serialises")), now_utc()],
+        )?;
+        Ok(())
+    }
+
+    /// Spec 9.4 step 4, one transaction: loadout version check -> pair validity -> change history
+    /// -> loadout -> APPLIED. Idempotent per event id (a repeated click returns AlreadyApplied and
+    /// changes nothing). Any failure rolls back everything.
+    pub fn apply_recommendation(
+        &mut self,
+        event_id: &str,
+        lib: &stacklab_opener::library::Library,
+        ruleset: &str,
+    ) -> Result<ApplyOutcome> {
+        use stacklab_training::recommend::RecStatus;
+        let tx = self.conn.transaction()?;
+        let ev = tx
+            .query_row(
+                "SELECT * FROM opener_recommendation WHERE event_id = ?1",
+                [event_id],
+                Self::row_to_event,
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::Data("unknown recommendation".into()))?;
+        if ev.status == RecStatus::Applied {
+            return Ok(ApplyOutcome::AlreadyApplied);
+        }
+        if !matches!(ev.status, RecStatus::Ready | RecStatus::Deferred) {
+            return Err(StoreError::Data(format!(
+                "cannot apply from {}",
+                ev.status.as_str()
+            )));
+        }
+        let (primary, fallback) = ev
+            .recommended()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .ok_or_else(|| StoreError::Data("no recommended pair".into()))?;
+        let current: Option<(String, String, i64)> = tx
+            .query_row("SELECT primary_opener_id, fallback_opener_id, version FROM opener_loadout WHERE id = 1", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?;
+        let Some(cur) = current else {
+            return Err(StoreError::Data("no loadout".into()));
+        };
+        if cur.2 as u32 != ev.source_loadout_version {
+            return Ok(ApplyOutcome::Conflict {
+                current_version: cur.2 as u32,
+                event_version: ev.source_loadout_version,
+            });
+        }
+        stacklab_opener::loadout::validate(lib, ruleset, &primary, &fallback)
+            .map_err(|e| StoreError::Data(e.to_string()))?;
+        let now = now_utc();
+        let version = cur.2 + 1;
+        tx.execute(
+            "INSERT INTO opener_change_history(before_json, after_json, reason, approval_event_id, created_at) VALUES (?1, ?2, 'recommendation', ?3, ?4)",
+            params![
+                json!({"primary": cur.0, "fallback": cur.1, "version": cur.2}).to_string(),
+                json!({"primary": primary, "fallback": fallback, "version": version}).to_string(),
+                event_id,
+                now
+            ],
+        )?;
+        tx.execute(
+            "UPDATE opener_loadout SET primary_opener_id = ?1, fallback_opener_id = ?2, version = ?3, updated_at = ?4 WHERE id = 1",
+            params![primary, fallback, version, now],
+        )?;
+        tx.execute("UPDATE opener_recommendation SET status = 'APPLIED', updated_at = ?2 WHERE event_id = ?1", params![event_id, now])?;
+        tx.commit()?;
+        Ok(ApplyOutcome::Applied(
+            stacklab_opener::loadout::OpenerLoadout {
+                primary,
+                fallback,
+                version: version as u32,
+            },
+        ))
     }
 
     // ----- backup / restore ------------------------------------------------------------

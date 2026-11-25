@@ -13,6 +13,7 @@ pub mod opener_gen;
 pub mod pcgen;
 pub mod policy;
 pub mod problem;
+pub mod recommend;
 pub mod service;
 pub mod session;
 pub mod set;

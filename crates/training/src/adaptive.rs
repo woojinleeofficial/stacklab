@@ -109,6 +109,15 @@ pub struct SkillProfile {
     /// Weight boosts from engine-observed match weaknesses (spec 7.4), halved every cycle.
     #[serde(default)]
     pub observed: BTreeMap<Module, f64>,
+    /// Valid (rated) opener-domain attempts so far — recommendation data condition (spec 9.1).
+    #[serde(default)]
+    pub opener_valid_attempts: u32,
+    /// Match rounds (minis included) with an opener observation (spec 9.1).
+    #[serde(default)]
+    pub opener_observed_rounds: u32,
+    /// Opener success observed in matches: (rounds, successes) per opener id.
+    #[serde(default)]
+    pub opener_match_stats: BTreeMap<String, (u32, u32)>,
 }
 
 impl SkillProfile {
@@ -126,6 +135,9 @@ impl SkillProfile {
             branch_stats: BTreeMap::new(),
             loadout: None,
             observed: BTreeMap::new(),
+            opener_valid_attempts: 0,
+            opener_observed_rounds: 0,
+            opener_match_stats: BTreeMap::new(),
         }
     }
 
@@ -158,6 +170,19 @@ impl SkillProfile {
 
     /// Adds engine-observed match weaknesses to the next cycle's weights (spec 7.4).
     pub fn apply_match_observations(&mut self, rounds: &[crate::set::Observations]) {
+        for o in rounds {
+            if let Some(built) = o.opener_built {
+                self.opener_observed_rounds += 1;
+                if let Some(lo) = &self.loadout {
+                    let e = self
+                        .opener_match_stats
+                        .entry(lo.primary.clone())
+                        .or_default();
+                    e.0 += 1;
+                    e.1 += built as u32;
+                }
+            }
+        }
         for (m, b) in crate::set::weakness_boosts(rounds) {
             *self.observed.entry(m).or_insert(0.0) += b;
         }
@@ -438,6 +463,7 @@ impl Cycle {
                 e.1 += r.attempt.success as u32;
             }
             if r.attempt.valid_for_mmr {
+                profile.opener_valid_attempts += 1;
                 let (d, d_rd) = profile.calibration.difficulty(&r.bucket, r.estimate);
                 let opp_rd = (d_rd * d_rd + MODEL_RD * MODEL_RD).sqrt();
                 per_opener.entry(op.to_string()).or_default().push(Outcome {

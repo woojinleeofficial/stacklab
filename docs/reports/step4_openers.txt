@@ -7,15 +7,15 @@
   branch j-on-z-mirror            pieces 6 reserve Some(T) finisher Some(Spin { piece: T, spin: Full, lines: 2 }): OK
   branch early-j                  pieces 6 reserve Some(T) finisher Some(Spin { piece: T, spin: Full, lines: 2 }): OK
   branch early-j-mirror           pieces 6 reserve Some(T) finisher Some(Spin { piece: T, spin: Full, lines: 2 }): OK
-  coverage [전수: 첫 Bag 5040가지, Hold 사용, 공개 정보 = 현재+Next 5]: full-sequence 3480/5040 (69.0%), visible-info 3480/5040 (69.0%, 95% CI 67.8–70.3%) guaranteed=false (26.7s)
+  coverage [전수: 첫 Bag 5040가지, Hold 사용, 공개 정보 = 현재+Next 5]: full-sequence 3480/5040 (69.0%), visible-info 3480/5040 (69.0%, 95% CI 67.8–70.3%) guaranteed=false (21.5s)
 == PCO (pco) v1 — Memorized, source: https://harddrop.com/wiki/Perfect_Clear_Opener
   branch with-i                   pieces 7 reserve None finisher Some(PerfectClear { lines: 4 }): OK
   branch with-i-mirror            pieces 7 reserve None finisher Some(PerfectClear { lines: 4 }): OK
   branch no-i                     pieces 6 reserve None finisher Some(PerfectClear { lines: 4 }): OK
   branch no-i-mirror              pieces 6 reserve None finisher Some(PerfectClear { lines: 4 }): OK
-  coverage [전수: 첫 Bag 5040가지, Hold 사용, 공개 정보 = 현재+Next 5]: full-sequence 4296/5040 (85.2%), visible-info 4296/5040 (85.2%, 95% CI 84.2–86.2%) guaranteed=false (38.3s)
+  coverage [전수: 첫 Bag 5040가지, Hold 사용, 공개 정보 = 현재+Next 5]: full-sequence 4296/5040 (85.2%), visible-info 4296/5040 (85.2%, 95% CI 84.2–86.2%) guaranteed=false (34.8s)
 == PC 우선 (범용) (pc-first) v1 — Template, source: StackLab template (solver-verified)
-  coverage [표본: 첫 Bag 42가지 (5,040가지 중 일정 간격), Hold 사용, 공개 정보 = 현재+Next 5 (가시정보는 다음 Bag 표본 추정)]: full-sequence 42/42 (100.0%), visible-info 42/42 (100.0%, 95% CI 91.6–100.0%) guaranteed=false (50.7s)
+  coverage [표본: 첫 Bag 42가지 (5,040가지 중 일정 간격), Hold 사용, 공개 정보 = 현재+Next 5 (가시정보는 다음 Bag 표본 추정)]: full-sequence 42/42 (100.0%), visible-info 42/42 (100.0%, 95% CI 91.6–100.0%) guaranteed=false (43.1s)
 == 자유 스태킹 전환 (free-transition) v1 — Template, source: StackLab template (search-verified)
-  coverage [표본: 첫 Bag 126가지 (5,040가지 중 일정 간격), Hold 사용, 공개 정보 = 현재+Next 5]: full-sequence 126/126 (100.0%), visible-info 126/126 (100.0%, 95% CI 97.0–100.0%) guaranteed=false (9.9s)
+  coverage [표본: 첫 Bag 126가지 (5,040가지 중 일정 간격), Hold 사용, 공개 정보 = 현재+Next 5]: full-sequence 126/126 (100.0%), visible-info 126/126 (100.0%, 95% CI 97.0–100.0%) guaranteed=false (8.1s)
 wrote data/openers/coverage.toml

@@ -111,6 +111,8 @@ enum Screen {
     Play(Box<Playing>),
     Openers,
     Match(Box<MatchPlay>),
+    /// UI-08: event id and whether the confirmation step (2nd step) is shown.
+    Recommend(String, bool),
 }
 
 struct StackApp {
@@ -135,6 +137,7 @@ struct StackApp {
     tl_msg: Option<String>,
     eval_report: Option<EvalReport>,
     rs: Arc<Ruleset>,
+    rec_msg: Option<String>,
 }
 
 fn data_dir() -> std::path::PathBuf {
@@ -223,6 +226,7 @@ impl StackApp {
             tl_input: (1500.0, 150.0),
             tl_msg: None,
             eval_report: None,
+            rec_msg: None,
             policy,
             store,
             profile,
@@ -592,6 +596,21 @@ impl StackApp {
             if let Some(m) = &self.opener_msg {
                 ui.label(m);
             }
+            ui.horizontal(|ui| {
+                if self.profile.loadout.is_some()
+                    && self.store.is_some()
+                    && ui.button(self.s.get("rec_reanalyze")).clicked()
+                {
+                    if let Some(id) = self.create_recommendation(false) {
+                        self.screen = Screen::Recommend(id, false);
+                    }
+                }
+                if let Some(id) = self.open_recommendation_id() {
+                    if ui.button(self.s.get("rec_deferred_list")).clicked() {
+                        self.screen = Screen::Recommend(id, false);
+                    }
+                }
+            });
             ui.separator();
             let openers = self.library.openers.clone();
             for def in &openers {
@@ -725,6 +744,318 @@ impl StackApp {
         }
     }
 
+    /// Demo data for the headless UI-08 screenshot (STACKLAB_AUTOSCREEN=recommend-demo).
+    fn seed_recommendation_demo(&mut self) {
+        use stacklab_training::glicko::Rating;
+        if self.profile.loadout.is_none() {
+            if let Some(st) = self.store.as_mut() {
+                if let Ok(lo) = st.set_loadout("tki", "free-transition", None, "demo", None) {
+                    self.profile.loadout = Some(lo);
+                }
+            }
+        }
+        for (m, r) in [
+            (Module::A, 1700.0),
+            (Module::B, 1650.0),
+            (Module::C, 1050.0),
+            (Module::D, 1950.0),
+            (Module::E, 1700.0),
+            (Module::F, 1500.0),
+            (Module::G, 1500.0),
+            (Module::H, 1800.0),
+        ] {
+            self.profile.skills.insert(m, Rating::new(r, 60.0, 0.06));
+        }
+        for (o, r) in [
+            ("tki", 1050.0),
+            ("pco", 1900.0),
+            ("free-transition", 1300.0),
+            ("pc-first", 1850.0),
+        ] {
+            self.profile
+                .openers
+                .insert(o.into(), Rating::new(r, 60.0, 0.06));
+        }
+        self.profile
+            .branch_stats
+            .insert("pco/with-i".into(), (30, 27));
+        self.profile.opener_valid_attempts = 30;
+        self.profile.opener_observed_rounds = 6;
+    }
+
+    /// Spec 9.1: one automatic event after the first qualifying normal evaluation.
+    fn maybe_create_recommendation(&mut self) {
+        let exists = self
+            .store
+            .as_ref()
+            .and_then(|s| s.has_automatic_recommendation().ok())
+            .unwrap_or(true);
+        if stacklab_training::recommend::automatic_trigger(
+            &self.profile,
+            &self.saved.set,
+            &self.policy,
+            exists,
+        ) {
+            self.create_recommendation(true);
+        }
+    }
+
+    /// Creates (and analyses) a recommendation event; returns its id.
+    fn create_recommendation(&mut self, automatic: bool) -> Option<String> {
+        let version = self.profile.loadout.as_ref()?.version;
+        let id = format!(
+            "rec-{}-{}",
+            if automatic { "auto" } else { "manual" },
+            stacklab_store::now_utc()
+        );
+        let trigger = automatic.then(|| format!("set-{}", self.saved.set.number));
+        let mut e =
+            stacklab_training::recommend::new_event(&id, trigger.as_deref(), automatic, version);
+        e.run(
+            &self.profile,
+            &self.library,
+            &self.coverage,
+            &self.policy,
+            "TL-S2",
+        )
+        .ok()?;
+        self.store.as_ref()?.create_recommendation(&e).ok()?;
+        Some(id)
+    }
+
+    /// A READY or DEFERRED event the user can still decide on.
+    fn open_recommendation_id(&self) -> Option<String> {
+        use stacklab_training::recommend::RecStatus;
+        let list = self.store.as_ref()?.list_recommendations().ok()?;
+        list.into_iter()
+            .rev()
+            .find(|e| matches!(e.status, RecStatus::Ready | RecStatus::Deferred))
+            .map(|e| e.event_id)
+    }
+
+    fn opener_name(&self, id: &str) -> String {
+        self.library
+            .get(id)
+            .map_or(id.to_string(), |d| d.name.clone())
+    }
+
+    fn pair_column(
+        &self,
+        ui: &mut egui::Ui,
+        title: &str,
+        p: &stacklab_training::recommend::PairScore,
+    ) {
+        use stacklab_training::recommend::Reason;
+        ui.vertical(|ui| {
+            ui.label(RichText::new(title).strong());
+            ui.label(
+                RichText::new(self.s.fmt(
+                    "rec_pair",
+                    &[
+                        ("p", self.opener_name(&p.primary)),
+                        ("f", self.opener_name(&p.fallback)),
+                    ],
+                ))
+                .size(18.0),
+            );
+            ui.label(self.s.fmt(
+                "rec_score",
+                &[
+                    ("s", format!("{:.1}", p.total)),
+                    ("lo", format!("{:.1}", p.low80)),
+                    ("hi", format!("{:.1}", p.high80)),
+                ],
+            ));
+            for c in &p.components {
+                let k = self.s.get(&format!("rec_component_{}", c.key));
+                let e = if c.estimated {
+                    self.s.get("rec_estimated")
+                } else {
+                    String::new()
+                };
+                ui.label(self.s.fmt(
+                    "rec_component_row",
+                    &[
+                        ("k", k),
+                        ("v", format!("{:.1}", c.value)),
+                        ("w", format!("{:.0}", c.weight)),
+                        ("e", e),
+                    ],
+                ));
+            }
+            for r in &p.reasons {
+                let t = match r {
+                    Reason::Coverage { primary, union } => self.s.fmt(
+                        "rec_reason_coverage",
+                        &[
+                            ("p", format!("{:.0}", 100.0 * primary)),
+                            ("u", format!("{:.0}", 100.0 * union)),
+                        ],
+                    ),
+                    Reason::Shortfall {
+                        opener,
+                        dimension,
+                        required,
+                        ability,
+                    } => self.s.fmt(
+                        "rec_reason_shortfall",
+                        &[
+                            ("o", self.opener_name(opener)),
+                            ("d", self.s.get(&format!("dim_{dimension}"))),
+                            ("r", required.to_string()),
+                            ("a", ability.to_string()),
+                        ],
+                    ),
+                    Reason::Observed { opener, rating, rd } => self.s.fmt(
+                        "rec_reason_observed",
+                        &[
+                            ("o", self.opener_name(opener)),
+                            ("r", format!("{rating:.0}")),
+                            ("d", format!("{rd:.0}")),
+                        ],
+                    ),
+                    Reason::Estimated { opener } => self
+                        .s
+                        .fmt("rec_reason_estimated", &[("o", self.opener_name(opener))]),
+                    Reason::Learning { opener, cost } => self.s.fmt(
+                        "rec_reason_learning",
+                        &[("o", self.opener_name(opener)), ("c", cost.to_string())],
+                    ),
+                };
+                ui.label(RichText::new(format!("• {t}")).weak());
+            }
+        });
+    }
+
+    /// UI-08 (spec 9.4): side-by-side comparison, then a confirmation step before applying.
+    fn recommend_screen(&mut self, ui: &mut egui::Ui, id: &str, confirm: bool) -> Option<Screen> {
+        use stacklab_training::recommend::{Analysis, RecStatus};
+        let ev = self.store.as_ref()?.load_recommendation(id).ok()??;
+        let mut next = None;
+        ui.horizontal(|ui| {
+            if ui.button(self.s.get("back_to_dashboard")).clicked() {
+                next = Some(Screen::Dashboard);
+            }
+            ui.heading(self.s.get("rec_title"));
+            ui.label(
+                RichText::new(
+                    self.s
+                        .fmt("rec_status", &[("s", ev.status.as_str().to_string())]),
+                )
+                .weak(),
+            );
+        });
+        if let Some(m) = &self.rec_msg {
+            ui.label(m);
+        }
+        match &ev.analysis {
+            Some(Analysis::Change {
+                current,
+                recommended,
+            }) => {
+                if !confirm {
+                    ui.horizontal(|ui| {
+                        self.pair_column(ui, &self.s.get("rec_current"), current);
+                        ui.separator();
+                        self.pair_column(ui, &self.s.get("rec_recommended"), recommended);
+                    });
+                    if matches!(ev.status, RecStatus::Ready | RecStatus::Deferred) {
+                        ui.horizontal(|ui| {
+                            if ui.button(self.s.get("rec_apply")).clicked() {
+                                next = Some(Screen::Recommend(id.to_string(), true));
+                            }
+                            if ui.button(self.s.get("rec_keep")).clicked() {
+                                self.set_rec_status(id, RecStatus::Declined);
+                                next = Some(Screen::Dashboard);
+                            }
+                            if ev.status == RecStatus::Ready
+                                && ui.button(self.s.get("rec_later")).clicked()
+                            {
+                                self.set_rec_status(id, RecStatus::Deferred);
+                                next = Some(Screen::Dashboard);
+                            }
+                        });
+                    }
+                } else {
+                    ui.label(RichText::new(self.s.get("rec_confirm_title")).strong());
+                    let a = self.s.fmt(
+                        "rec_pair",
+                        &[
+                            ("p", self.opener_name(&current.primary)),
+                            ("f", self.opener_name(&current.fallback)),
+                        ],
+                    );
+                    let b = self.s.fmt(
+                        "rec_pair",
+                        &[
+                            ("p", self.opener_name(&recommended.primary)),
+                            ("f", self.opener_name(&recommended.fallback)),
+                        ],
+                    );
+                    ui.label(self.s.fmt("rec_before_after", &[("a", a), ("b", b)]));
+                    ui.label(self.s.get("rec_keep_note"));
+                    ui.horizontal(|ui| {
+                        if ui.button(self.s.get("rec_confirm")).clicked() {
+                            next = Some(self.confirm_recommendation(id));
+                        }
+                        if ui.button(self.s.get("rec_cancel")).clicked() {
+                            next = Some(Screen::Recommend(id.to_string(), false));
+                        }
+                    });
+                }
+            }
+            Some(Analysis::NoChange { current, .. }) => {
+                ui.label(self.s.get("rec_nochange"));
+                self.pair_column(ui, &self.s.get("rec_current"), current);
+            }
+            _ => {
+                ui.label(self.s.get("rec_unavailable"));
+            }
+        }
+        next
+    }
+
+    fn set_rec_status(&mut self, id: &str, to: stacklab_training::recommend::RecStatus) {
+        let Some(st) = self.store.as_ref() else {
+            return;
+        };
+        if let Ok(Some(mut e)) = st.load_recommendation(id) {
+            if e.transition(to).is_ok() {
+                let _ = st.save_recommendation(&e);
+            }
+        }
+    }
+
+    /// Step 2 "변경 확정": one DB transaction; on any failure the old loadout stays.
+    fn confirm_recommendation(&mut self, id: &str) -> Screen {
+        let lib = self.library.clone();
+        let Some(st) = self.store.as_mut() else {
+            return Screen::Dashboard;
+        };
+        match st.apply_recommendation(id, &lib, "TL-S2") {
+            Ok(stacklab_store::ApplyOutcome::Applied(lo)) => {
+                self.rec_msg = Some(self.s.fmt("rec_applied", &[("v", lo.version.to_string())]));
+                self.opener_msg = self.rec_msg.clone();
+                self.pick = (lo.primary.clone(), lo.fallback.clone());
+                self.profile.loadout = Some(lo);
+                self.persist();
+                Screen::Openers
+            }
+            Ok(stacklab_store::ApplyOutcome::AlreadyApplied) => {
+                self.rec_msg = Some(self.s.get("rec_already"));
+                Screen::Openers
+            }
+            Ok(stacklab_store::ApplyOutcome::Conflict { .. }) => {
+                self.rec_msg = Some(self.s.get("rec_conflict"));
+                Screen::Recommend(id.to_string(), false)
+            }
+            Err(e) => {
+                self.rec_msg = Some(self.s.fmt("rec_failed", &[("e", e.to_string())]));
+                Screen::Recommend(id.to_string(), false)
+            }
+        }
+    }
+
     fn match_rating_panel(&mut self, ui: &mut egui::Ui) {
         let r = self.matchp.rating;
         let key = if self.matchp.anchored() {
@@ -813,6 +1144,7 @@ impl StackApp {
                     }
                     if ui.button(self.s.get("eval_close")).clicked() {
                         let _ = self.saved.set.close_without_evaluation();
+                        self.maybe_create_recommendation();
                         self.eval_report = Some(EvalReport {
                             wins: w,
                             losses: l,
@@ -868,6 +1200,11 @@ impl StackApp {
                                 self.s.get(&format!("weak_{}", w.replace('-', "_")))
                             ));
                         }
+                    }
+                }
+                if let Some(id) = self.open_recommendation_id() {
+                    if ui.button(self.s.get("rec_open")).clicked() {
+                        self.screen = Screen::Recommend(id, false);
                     }
                 }
                 if ui.button(self.s.get("next_set")).clicked() {
@@ -1354,6 +1691,13 @@ impl eframe::App for StackApp {
             match std::env::var("STACKLAB_AUTOSCREEN").as_deref() {
                 Ok("openers") => self.screen = Screen::Openers,
                 Ok("match") => self.start_match(MatchKind::Mini(1)),
+                // headless check only: a strong-PC demo profile in a throwaway HOME
+                Ok("recommend-demo") => {
+                    self.seed_recommendation_demo();
+                    if let Some(id) = self.create_recommendation(false) {
+                        self.screen = Screen::Recommend(id, false);
+                    }
+                }
                 _ => {}
             }
         }
@@ -1372,6 +1716,12 @@ impl eframe::App for StackApp {
             }
             Screen::Play(play) => self.play_screen(ui, play),
             Screen::Match(m) => self.match_screen(ui, m),
+            Screen::Recommend(id, confirm) => {
+                let mut next = None;
+                egui::CentralPanel::default()
+                    .show(ui, |ui| next = self.recommend_screen(ui, &id, confirm));
+                next.unwrap_or(Screen::Recommend(id, confirm))
+            }
             Screen::Openers => {
                 let mut back = false;
                 egui::CentralPanel::default().show(ui, |ui| back = self.openers_screen(ui));

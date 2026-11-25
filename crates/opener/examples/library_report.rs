@@ -44,8 +44,9 @@ fn main() {
             c.scope, c.full, c.total, 100.0 * c.full as f64 / c.total as f64, c.visible, c.total, 100.0 * c.rate(), 100.0 * c.ci95.0, 100.0 * c.ci95.1, c.is_guaranteed(), t.elapsed().as_secs_f64()
         );
         toml += &format!(
-            "\n[{}]\nversion = {}\nscope = {:?}\nexhaustive = {}\ntotal = {}\nfull = {}\nvisible = {}\nci_low = {:.4}\nci_high = {:.4}\n",
-            def.id, def.version, c.scope, c.exhaustive, c.total, c.full, c.visible, c.ci95.0, c.ci95.1
+            "\n[{}]\nversion = {}\nscope = {:?}\nexhaustive = {}\ntotal = {}\nfull = {}\nvisible = {}\nci_low = {:.4}\nci_high = {:.4}\nbits = {:?}\n",
+            def.id, def.version, c.scope, c.exhaustive, c.total, c.full, c.visible, c.ci95.0, c.ci95.1,
+            if c.exhaustive { stacklab_opener::library::encode_bits(&c.per_bag) } else { String::new() }
         );
     }
     if write {

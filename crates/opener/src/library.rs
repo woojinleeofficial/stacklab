@@ -334,6 +334,9 @@ impl Library {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct CoverageRecord {
     pub version: u32,
+    /// Hex bitset of visible-info feasibility per first bag (exhaustive scopes only).
+    #[serde(default)]
+    pub bits: String,
     pub scope: String,
     pub exhaustive: bool,
     pub total: u32,
@@ -357,4 +360,38 @@ pub const COVERAGE_TOML: &str = include_str!("../../../data/openers/coverage.tom
 
 pub fn coverage_table() -> BTreeMap<String, CoverageRecord> {
     toml::from_str(COVERAGE_TOML).expect("coverage.toml parses")
+}
+
+/// Hex encoding of a per-bag bitset (bit i = bag i in `all_first_bags()` order).
+pub fn encode_bits(v: &[bool]) -> String {
+    v.chunks(4)
+        .map(|c| {
+            let n = c
+                .iter()
+                .enumerate()
+                .fold(0u8, |a, (i, &b)| a | (u8::from(b) << i));
+            char::from_digit(n as u32, 16).expect("nibble")
+        })
+        .collect()
+}
+
+pub fn decode_bits(s: &str, len: usize) -> Vec<bool> {
+    let mut out = Vec::with_capacity(len);
+    for ch in s.chars() {
+        let n = ch.to_digit(16).unwrap_or(0);
+        for i in 0..4 {
+            if out.len() < len {
+                out.push(n >> i & 1 == 1);
+            }
+        }
+    }
+    out
+}
+
+impl CoverageRecord {
+    /// Per-bag feasibility when the scope was exhaustive.
+    pub fn per_bag(&self) -> Option<Vec<bool>> {
+        (self.exhaustive && !self.bits.is_empty())
+            .then(|| decode_bits(&self.bits, self.total as usize))
+    }
 }

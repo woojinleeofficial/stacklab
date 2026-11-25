@@ -400,6 +400,8 @@ pub struct Coverage {
     pub visible: u32,
     /// 95 % Wilson interval of the visible-info rate.
     pub ci95: (f64, f64),
+    /// Visible-info result per evaluated bag, in `all_first_bags()` order (stepped).
+    pub per_bag: Vec<bool>,
 }
 
 impl Coverage {
@@ -461,15 +463,19 @@ pub fn coverage(
     let mut second = Bag7::new(0x0bea_c0de, "ZLOSIJT");
     let tail: Vec<Piece> = (0..7).map(|_| second.next_piece()).collect();
     let (mut full, mut vis) = (0, 0);
+    let mut per_bag = Vec::with_capacity(bags.len());
     for b in &bags {
         let mut q = b.clone();
         q.extend(tail.iter().copied());
+        let mut ok = false;
         if opener_full_sequence(def, &q, rules).is_some() {
             full += 1;
             if opener_visible(def, &b[..visible.min(7)], rules).is_some() {
                 vis += 1;
+                ok = true;
             }
         }
+        per_bag.push(ok);
     }
     let total = bags.len() as u32;
     let estimate = def.template.is_some_and(|t| t.pc.is_some());
@@ -491,6 +497,7 @@ pub fn coverage(
             }
         ),
         exhaustive: step <= 1,
+        per_bag,
         total,
         full,
         visible: vis,

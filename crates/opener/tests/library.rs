@@ -126,3 +126,16 @@ fn neither_possible_means_free_stacking() {
         Decision::FreeStacking
     );
 }
+
+#[test]
+fn per_bag_bits_roundtrip_and_match_counts() {
+    use stacklab_opener::library::{decode_bits, encode_bits};
+    let v: Vec<bool> = (0..5040).map(|i| i % 7 == 0 || i % 11 == 3).collect();
+    assert_eq!(decode_bits(&encode_bits(&v), v.len()), v);
+    let table = stacklab_opener::library::coverage_table();
+    for id in ["tki", "pco"] {
+        let c = &table[id];
+        let bits = c.per_bag().expect("exhaustive openers store per-bag bits");
+        assert_eq!(bits.iter().filter(|b| **b).count() as u32, c.visible);
+    }
+}

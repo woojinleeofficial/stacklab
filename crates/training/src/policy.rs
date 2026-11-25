@@ -18,6 +18,22 @@ pub struct Policy {
     pub tl_anchor: TlAnchorPolicy,
     #[serde(rename = "match")]
     pub matches: MatchPolicy,
+    pub recommendation: RecommendationPolicy,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecommendationPolicy {
+    pub min_opener_attempts: u32,
+    pub min_observed_rounds: u32,
+    pub min_score_gap: f64,
+    pub confidence_level: f64,
+    pub weights: BTreeMap<String, f64>,
+}
+
+impl RecommendationPolicy {
+    pub fn weight(&self, key: &str) -> f64 {
+        self.weights.get(key).copied().unwrap_or(0.0)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -135,5 +151,15 @@ mod tests {
         assert_eq!(p.tl_anchor.min_rd, 150.0);
         assert_eq!(p.matches.win_prob_band, [0.40, 0.60]);
         assert_eq!(p.matches.evaluation_first_to, 2);
+        let r = &p.recommendation;
+        assert_eq!(
+            (
+                r.min_opener_attempts,
+                r.min_observed_rounds,
+                r.min_score_gap
+            ),
+            (10, 4, 8.0)
+        );
+        assert_eq!(r.weights.values().sum::<f64>(), 100.0);
     }
 }
