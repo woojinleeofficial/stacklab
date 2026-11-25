@@ -14,17 +14,13 @@ use stacklab_engine::game::{Handling, InputEvent, Key};
 use stacklab_engine::rng::Rng;
 use stacklab_engine::{Ruleset, Spin};
 use stacklab_store::Store;
-use stacklab_training::adaptive::{
-    anchor_bucket, diagnosis_plan, plan_cycle, Cycle, SkillProfile, SlotResult,
-};
+use stacklab_training::adaptive::SkillProfile;
+use stacklab_training::flow::{ProblemRequest, RoundKind, TrainingState};
 use stacklab_training::policy::Policy;
 use stacklab_training::problem::{Goal, Module, Problem, WitnessStep};
 use stacklab_training::service::ProblemService;
 use stacklab_training::session::{AttemptResult, AttemptSession, FailReason, Status};
-use stacklab_training::set::{
-    opener_built, select_opponent, MatchProfile, MiniStatus, Observations, Phase, RoundRecord,
-    SetState,
-};
+use stacklab_training::set::{opener_built, MiniStatus, Observations, Phase};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use strings::Strings;
@@ -76,15 +72,6 @@ fn keymap() -> Vec<(egui::Key, Key)> {
     ]
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct SavedCycle {
-    cycle: Cycle,
-    diagnosis: bool,
-    number: u32,
-    #[serde(default = "SetState::new_first")]
-    set: SetState,
-}
-
 /// UI-06 data of the last evaluation.
 #[derive(Clone)]
 struct EvalReport {
@@ -119,8 +106,7 @@ struct StackApp {
     s: Strings,
     policy: Policy,
     store: Option<Store>,
-    profile: SkillProfile,
-    saved: SavedCycle,
+    st: TrainingState,
     rng: Rng,
     worker: (Sender<Request>, Receiver<Option<Problem>>),
     screen: Screen,
@@ -131,7 +117,6 @@ struct StackApp {
     coverage: std::collections::BTreeMap<String, stacklab_opener::library::CoverageRecord>,
     pick: (String, String),
     opener_msg: Option<String>,
-    matchp: MatchProfile,
     bots: stacklab_bot::Calibration,
     tl_input: (f64, f64),
     tl_msg: Option<String>,
@@ -188,30 +173,23 @@ impl StackApp {
             .ok()
             .and_then(|_| Store::open(&data_dir().join("stacklab.db")).ok());
         let load = |k: &str| store.as_ref().and_then(|s| s.get_state(k).ok().flatten());
-        let profile = load("profile")
-            .and_then(|j| serde_json::from_str(&j).ok())
-            .unwrap_or_else(|| SkillProfile::new(&policy));
-        let saved = load("cycle")
-            .and_then(|j| serde_json::from_str(&j).ok())
-            .unwrap_or(SavedCycle {
-                cycle: Cycle::new(diagnosis_plan(1)),
-                diagnosis: true,
-                number: 0,
-                set: SetState::new_first(),
-            });
-        let matchp = load("match")
-            .and_then(|j| serde_json::from_str(&j).ok())
-            .unwrap_or_else(|| MatchProfile::new(&policy));
+        let st = load("training")
+            .and_then(|j| serde_json::from_str::<TrainingState>(&j).ok())
+            .unwrap_or_else(|| TrainingState::new(&policy, 1));
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(1);
         let autoshot = std::env::var("STACKLAB_AUTOSHOT").ok().map(|p| (p, 0));
-        let mut profile = profile;
-        if let Some(lo) = store.as_ref().and_then(|s| s.load_loadout().ok().flatten()) {
-            profile.loadout = Some(lo);
+        let mut st = st;
+        if st.seed_state == 1 {
+            st.seed_state = seed.max(2);
         }
-        let pick = profile
+        if let Some(lo) = store.as_ref().and_then(|s| s.load_loadout().ok().flatten()) {
+            st.profile.loadout = Some(lo);
+        }
+        let pick = st
+            .profile
             .loadout
             .as_ref()
             .map_or(("tki".to_string(), "free-transition".to_string()), |l| {
@@ -221,7 +199,6 @@ impl StackApp {
             s: Strings::korean(),
             worker: spawn_worker(rs.clone(), policy.clone(), cc.egui_ctx.clone()),
             rs,
-            matchp,
             bots: stacklab_bot::calibration(),
             tl_input: (1500.0, 150.0),
             tl_msg: None,
@@ -229,8 +206,7 @@ impl StackApp {
             rec_msg: None,
             policy,
             store,
-            profile,
-            saved,
+            st,
             rng: Rng::new(seed),
             screen: Screen::Dashboard,
             handling: Handling::default(),
@@ -246,32 +222,19 @@ impl StackApp {
     fn persist(&self) {
         if let Some(st) = &self.store {
             let _ = st.set_state(
-                "profile",
-                &serde_json::to_string(&self.profile).unwrap_or_default(),
-            );
-            let _ = st.set_state(
-                "cycle",
-                &serde_json::to_string(&self.saved).unwrap_or_default(),
-            );
-            let _ = st.set_state(
-                "match",
-                &serde_json::to_string(&self.matchp).unwrap_or_default(),
+                "training",
+                &serde_json::to_string(&self.st).unwrap_or_default(),
             );
         }
     }
 
     fn request_next(&mut self) {
-        let Some(m) = self.saved.cycle.next_module() else {
-            return;
-        };
-        let req = if self.saved.diagnosis {
-            Request::Anchor(m, self.rng.below(10))
-        } else {
-            Request::Slot(
-                m,
-                Box::new(self.profile.clone()),
-                self.rng.below(u64::MAX >> 1),
-            )
+        let req = match self.st.next_request() {
+            Some(ProblemRequest::Anchor { module, k }) => Request::Anchor(module, k),
+            Some(ProblemRequest::Slot { module, seed }) => {
+                Request::Slot(module, Box::new(self.st.profile.clone()), seed)
+            }
+            None => return,
         };
         if self.worker.0.send(req).is_ok() {
             self.screen = Screen::Loading;
@@ -426,23 +389,7 @@ impl StackApp {
     fn finish_slot(&mut self, play: &Playing) {
         let p = &play.session.problem;
         let first = play.first.clone().unwrap_or_else(|| play.session.result());
-        let share =
-            (first.elapsed_frames as f64 / (p.time_limit_secs.max(1) as f64 * 60.0)).min(1.0);
-        let bucket = if self.saved.diagnosis {
-            anchor_bucket(p.module)
-        } else {
-            p.param_bucket.clone()
-        };
-        self.saved.cycle.record(SlotResult {
-            module: p.module,
-            bucket,
-            estimate: p.difficulty,
-            tags: p.subtype_tags.clone(),
-            attempt: first,
-            time_share: share,
-        });
-        if self.saved.cycle.is_complete() {
-            let report = self.saved.cycle.close(&mut self.profile, &self.policy);
+        if let Some(report) = self.st.record_problem(p, first, &self.policy) {
             self.last_report = Some(self.s.fmt(
                 "cycle_done",
                 &[
@@ -450,37 +397,21 @@ impl StackApp {
                     ("s", report.successes.to_string()),
                 ],
             ));
-            let mut set = self.saved.set.clone();
-            if self.saved.diagnosis {
-                let _ = set.diagnosis_done();
-            } else {
-                let _ = set.cycle_done();
-            }
-            self.saved = SavedCycle {
-                cycle: Cycle::new(plan_cycle(&self.profile, &self.policy, &mut self.rng)),
-                diagnosis: false,
-                number: self.saved.number + 1,
-                set,
-            };
         }
         self.persist();
     }
 
     fn progress_text(&self) -> String {
-        let n = self.saved.cycle.results.len() + 1;
-        if self.saved.diagnosis {
+        let (c, n) = self.st.progress();
+        if self.st.diagnosis {
             self.s.fmt(
                 "diagnosis_progress",
                 &[
                     ("n", n.to_string()),
-                    ("m", self.saved.cycle.plan.len().to_string()),
+                    ("m", self.st.cycle.plan.len().to_string()),
                 ],
             )
         } else {
-            let c = match self.saved.set.phase {
-                Phase::Training(k) => k as u32,
-                _ => 3,
-            };
             self.s.fmt(
                 "cycle_progress",
                 &[("c", c.to_string()), ("n", n.to_string())],
@@ -491,12 +422,12 @@ impl StackApp {
     fn dashboard(&mut self, ui: &mut egui::Ui) {
         ui.heading(self.s.get("app_title"));
         ui.add_space(8.0);
-        let label = if self.saved.cycle.results.is_empty() && self.saved.number == 0 {
+        let label = if self.st.cycle.results.is_empty() && self.st.diagnosis {
             self.s.get("start_training")
         } else {
             self.s.get("continue_training")
         };
-        let phase = self.saved.set.phase;
+        let phase = self.st.set.phase;
         ui.horizontal(|ui| {
             if matches!(phase, Phase::Diagnosis | Phase::Training(_))
                 && ui
@@ -521,7 +452,7 @@ impl StackApp {
         ui.separator();
         ui.label(RichText::new(self.s.get("skill_ratings")).strong());
         egui::Grid::new("skills").striped(true).show(ui, |ui| {
-            for (m, r) in &self.profile.skills {
+            for (m, r) in &self.st.profile.skills {
                 ui.label(format!("{} {}", m.letter(), self.module_name(*m)));
                 let prov = if r.is_provisional(self.policy.rating.provisional_rd) {
                     format!(" ({})", self.s.get("provisional"))
@@ -545,7 +476,7 @@ impl StackApp {
                 ui.heading(self.s.get("openers"));
             });
             ui.label(self.s.get("opener_rule"));
-            if self.profile.loadout.is_none() {
+            if self.st.profile.loadout.is_none() {
                 ui.label(RichText::new(self.s.get("opener_none")).weak());
             }
             let names: Vec<(String, String, bool)> = self
@@ -597,7 +528,7 @@ impl StackApp {
                 ui.label(m);
             }
             ui.horizontal(|ui| {
-                if self.profile.loadout.is_some()
+                if self.st.profile.loadout.is_some()
                     && self.store.is_some()
                     && ui.button(self.s.get("rec_reanalyze")).clicked()
                 {
@@ -614,7 +545,7 @@ impl StackApp {
             ui.separator();
             let openers = self.library.openers.clone();
             for def in &openers {
-                let role = match &self.profile.loadout {
+                let role = match &self.st.profile.loadout {
                     Some(l) if l.primary == def.id => {
                         format!(" — {}", self.s.get("opener_primary"))
                     }
@@ -653,7 +584,7 @@ impl StackApp {
                                 .weak(),
                         );
                     }
-                    match self.profile.openers.get(&def.id) {
+                    match self.st.profile.openers.get(&def.id) {
                         Some(r) => ui.label(self.s.fmt(
                             "opener_proficiency",
                             &[
@@ -693,6 +624,7 @@ impl StackApp {
                                         },
                                     );
                                     let (n, s) = self
+                                        .st
                                         .profile
                                         .branch_stats
                                         .get(&format!("{}/{}", def.id, b.id))
@@ -718,7 +650,7 @@ impl StackApp {
 
     fn apply_loadout(&mut self) {
         let (p, f) = self.pick.clone();
-        let expected = self.profile.loadout.as_ref().map(|l| l.version);
+        let expected = self.st.profile.loadout.as_ref().map(|l| l.version);
         if let Err(e) = stacklab_opener::loadout::validate(&self.library, "TL-S2", &p, &f) {
             self.opener_msg = Some(e.to_string());
             return;
@@ -737,7 +669,7 @@ impl StackApp {
             Ok(lo) => {
                 self.opener_msg =
                     Some(self.s.fmt("opener_saved", &[("v", lo.version.to_string())]));
-                self.profile.loadout = Some(lo);
+                self.st.profile.loadout = Some(lo);
                 self.persist();
             }
             Err(e) => self.opener_msg = Some(e),
@@ -747,10 +679,10 @@ impl StackApp {
     /// Demo data for the headless UI-08 screenshot (STACKLAB_AUTOSCREEN=recommend-demo).
     fn seed_recommendation_demo(&mut self) {
         use stacklab_training::glicko::Rating;
-        if self.profile.loadout.is_none() {
+        if self.st.profile.loadout.is_none() {
             if let Some(st) = self.store.as_mut() {
                 if let Ok(lo) = st.set_loadout("tki", "free-transition", None, "demo", None) {
-                    self.profile.loadout = Some(lo);
+                    self.st.profile.loadout = Some(lo);
                 }
             }
         }
@@ -764,7 +696,7 @@ impl StackApp {
             (Module::G, 1500.0),
             (Module::H, 1800.0),
         ] {
-            self.profile.skills.insert(m, Rating::new(r, 60.0, 0.06));
+            self.st.profile.skills.insert(m, Rating::new(r, 60.0, 0.06));
         }
         for (o, r) in [
             ("tki", 1050.0),
@@ -772,15 +704,17 @@ impl StackApp {
             ("free-transition", 1300.0),
             ("pc-first", 1850.0),
         ] {
-            self.profile
+            self.st
+                .profile
                 .openers
                 .insert(o.into(), Rating::new(r, 60.0, 0.06));
         }
-        self.profile
+        self.st
+            .profile
             .branch_stats
             .insert("pco/with-i".into(), (30, 27));
-        self.profile.opener_valid_attempts = 30;
-        self.profile.opener_observed_rounds = 6;
+        self.st.profile.opener_valid_attempts = 30;
+        self.st.profile.opener_observed_rounds = 6;
     }
 
     /// Spec 9.1: one automatic event after the first qualifying normal evaluation.
@@ -791,8 +725,8 @@ impl StackApp {
             .and_then(|s| s.has_automatic_recommendation().ok())
             .unwrap_or(true);
         if stacklab_training::recommend::automatic_trigger(
-            &self.profile,
-            &self.saved.set,
+            &self.st.profile,
+            &self.st.set,
             &self.policy,
             exists,
         ) {
@@ -802,17 +736,17 @@ impl StackApp {
 
     /// Creates (and analyses) a recommendation event; returns its id.
     fn create_recommendation(&mut self, automatic: bool) -> Option<String> {
-        let version = self.profile.loadout.as_ref()?.version;
+        let version = self.st.profile.loadout.as_ref()?.version;
         let id = format!(
             "rec-{}-{}",
             if automatic { "auto" } else { "manual" },
             stacklab_store::now_utc()
         );
-        let trigger = automatic.then(|| format!("set-{}", self.saved.set.number));
+        let trigger = automatic.then(|| format!("set-{}", self.st.set.number));
         let mut e =
             stacklab_training::recommend::new_event(&id, trigger.as_deref(), automatic, version);
         e.run(
-            &self.profile,
+            &self.st.profile,
             &self.library,
             &self.coverage,
             &self.policy,
@@ -1037,7 +971,7 @@ impl StackApp {
                 self.rec_msg = Some(self.s.fmt("rec_applied", &[("v", lo.version.to_string())]));
                 self.opener_msg = self.rec_msg.clone();
                 self.pick = (lo.primary.clone(), lo.fallback.clone());
-                self.profile.loadout = Some(lo);
+                self.st.profile.loadout = Some(lo);
                 self.persist();
                 Screen::Openers
             }
@@ -1057,8 +991,8 @@ impl StackApp {
     }
 
     fn match_rating_panel(&mut self, ui: &mut egui::Ui) {
-        let r = self.matchp.rating;
-        let key = if self.matchp.anchored() {
+        let r = self.st.matchp.rating;
+        let key = if self.st.matchp.anchored() {
             "match_rating_tl"
         } else {
             "match_rating_app"
@@ -1087,16 +1021,16 @@ impl StackApp {
             );
             if ui.button(self.s.get("tl_apply")).clicked() {
                 let now = stacklab_store::now_utc();
-                self.matchp.enter_anchor(
+                self.st.matchp.enter_anchor(
                     self.tl_input.0,
                     self.tl_input.1,
                     &now,
                     self.policy.tl_anchor.min_rd,
                 );
-                self.tl_msg = Some(
-                    self.s
-                        .fmt("tl_saved", &[("n", self.matchp.anchors.len().to_string())]),
-                );
+                self.tl_msg = Some(self.s.fmt(
+                    "tl_saved",
+                    &[("n", self.st.matchp.anchors.len().to_string())],
+                ));
                 self.persist();
             }
         });
@@ -1107,7 +1041,7 @@ impl StackApp {
 
     /// Phase-specific actions: mini matches, evaluation, result (UI-06).
     fn match_actions(&mut self, ui: &mut egui::Ui) {
-        let set = self.saved.set.clone();
+        let set = self.st.set.clone();
         match set.phase {
             Phase::Mini(k) => {
                 ui.label(RichText::new(self.s.fmt("phase_mini", &[("k", k.to_string())])).strong());
@@ -1116,11 +1050,11 @@ impl StackApp {
                         self.start_match(MatchKind::Mini(k));
                     }
                     if ui.button(self.s.get("mini_skip")).clicked() {
-                        let _ = self.saved.set.skip_mini();
+                        let _ = self.st.set.skip_mini();
                         self.persist();
                     }
                     if ui.button(self.s.get("mini_defer")).clicked() {
-                        let _ = self.saved.set.defer_mini();
+                        let _ = self.st.set.defer_mini();
                         self.persist();
                     }
                 });
@@ -1139,11 +1073,11 @@ impl StackApp {
                         self.start_match(MatchKind::Evaluation);
                     }
                     if ui.button(self.s.get("eval_defer")).clicked() {
-                        let _ = self.saved.set.defer_evaluation();
+                        let _ = self.st.set.defer_evaluation();
                         self.persist();
                     }
                     if ui.button(self.s.get("eval_close")).clicked() {
-                        let _ = self.saved.set.close_without_evaluation();
+                        let _ = self.st.set.close_without_evaluation();
                         self.maybe_create_recommendation();
                         self.eval_report = Some(EvalReport {
                             wins: w,
@@ -1208,8 +1142,8 @@ impl StackApp {
                     }
                 }
                 if ui.button(self.s.get("next_set")).clicked() {
-                    if let Ok(n) = self.saved.set.next_set() {
-                        self.saved.set = n;
+                    if let Ok(n) = self.st.set.next_set() {
+                        self.st.set = n;
                         self.eval_report = None;
                         self.persist();
                     }
@@ -1233,30 +1167,16 @@ impl StackApp {
     }
 
     fn start_match(&mut self, kind: MatchKind) {
-        let bots: Vec<(String, f64, f64)> = self
+        let league: Vec<(String, f64, f64)> = self
             .bots
             .bot
             .iter()
-            .map(|b| {
-                let (r, rd) = self.matchp.bot_rating(&b.id, b.rating, b.rd);
-                (b.id.clone(), r, rd)
-            })
+            .map(|b| (b.id.clone(), b.rating, b.rd))
             .collect();
-        let band = (
-            self.policy.matches.win_prob_band[0],
-            self.policy.matches.win_prob_band[1],
-        );
-        let Some((id, p, in_band)) = select_opponent(&self.matchp, &bots, band) else {
+        let Some((id, cal_rating, cal_rd, p, in_band)) = self.st.opponent(&league, &self.policy)
+        else {
             return;
         };
-        let cal = self
-            .bots
-            .bot
-            .iter()
-            .find(|b| b.id == id)
-            .cloned()
-            .expect("selected bot");
-        let (cal_rating, cal_rd) = self.matchp.bot_rating(&cal.id, cal.rating, cal.rd);
         let seed = self.rng.below(u64::MAX >> 1);
         let m = MatchPlay::new(
             kind,
@@ -1273,7 +1193,7 @@ impl StackApp {
     }
 
     fn opener_shapes(&self) -> Vec<stacklab_engine::Board> {
-        let Some(lo) = &self.profile.loadout else {
+        let Some(lo) = &self.st.profile.loadout else {
             return vec![];
         };
         [&lo.primary, &lo.fallback]
@@ -1291,50 +1211,34 @@ impl StackApp {
         if !shapes.is_empty() {
             obs.opener_built = Some(opener_built(&m.user_boards, &shapes));
         }
-        self.profile
-            .apply_match_observations(std::slice::from_ref(&obs));
-        match m.kind {
-            MatchKind::Mini(_) => {
-                let _ = self.saved.set.mini_result(won);
-            }
-            MatchKind::DeferredMini(i) => {
-                self.saved.set.deferred_mini_result(i, won);
-            }
-            MatchKind::Evaluation => {
-                let rec = RoundRecord {
-                    won,
-                    void: false,
-                    bot: m.bot_id.clone(),
-                    bot_rating: m.bot_rating,
-                    bot_rd: m.bot_rd,
-                    calibration_version: self
-                        .matchp
-                        .calibration_version(self.bots.calibration_version),
-                    observations: obs,
-                };
-                if let Ok(true) = self.saved.set.eval_round(rec) {
-                    let (w, l) = self.saved.set.score();
-                    let (before, after) = self
-                        .matchp
-                        .rate_evaluation(&self.saved.set.eval_rounds, &self.policy);
-                    let weaknesses = self
-                        .saved
-                        .set
-                        .eval_rounds
-                        .iter()
-                        .flat_map(|r| r.observations.weaknesses().into_iter().map(|x| x.1))
-                        .collect::<std::collections::BTreeSet<_>>()
-                        .into_iter()
-                        .collect();
-                    self.eval_report = Some(EvalReport {
-                        wins: w,
-                        losses: l,
-                        before: Some((before.rating, before.rd)),
-                        after: Some((after.rating, after.rd)),
-                        weaknesses,
-                    });
-                }
-            }
+        let kind = match m.kind {
+            MatchKind::Mini(_) => RoundKind::Mini,
+            MatchKind::DeferredMini(i) => RoundKind::DeferredMini(i),
+            MatchKind::Evaluation => RoundKind::Evaluation,
+        };
+        let exists = self
+            .store
+            .as_ref()
+            .and_then(|s| s.has_automatic_recommendation().ok())
+            .unwrap_or(true);
+        if let Ok(Some(ev)) = self.st.record_round(
+            kind,
+            won,
+            &m.bot_id,
+            m.bot_rating,
+            m.bot_rd,
+            self.bots.calibration_version,
+            obs,
+            &self.policy,
+            exists,
+        ) {
+            self.eval_report = Some(EvalReport {
+                wins: ev.wins,
+                losses: ev.losses,
+                before: Some((ev.before.rating, ev.before.rd)),
+                after: Some((ev.after.rating, ev.after.rd)),
+                weaknesses: ev.weaknesses,
+            });
         }
         self.persist();
     }
@@ -1368,7 +1272,7 @@ impl StackApp {
         let now = ui.input(|i| i.time);
         m.advance(now);
         ui.ctx().request_repaint();
-        let (w, l) = self.saved.set.score();
+        let (w, l) = self.st.set.score();
         let header = match m.kind {
             MatchKind::Evaluation => self.s.fmt(
                 "round_label",
