@@ -6,6 +6,7 @@ pub mod attack;
 pub mod cache;
 pub mod defense;
 pub mod finesse;
+pub mod flow;
 pub mod gen_common;
 pub mod glicko;
 pub mod judgment;

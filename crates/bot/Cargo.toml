@@ -10,3 +10,7 @@ stacklab-engine = { path = "../engine" }
 stacklab-training = { path = "../training" }
 serde.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+stacklab-store = { path = "../store" }
+stacklab-opener = { path = "../opener" }

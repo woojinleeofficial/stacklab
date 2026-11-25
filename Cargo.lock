@@ -3100,6 +3100,8 @@ version = "0.0.1"
 dependencies = [
  "serde",
  "stacklab-engine",
+ "stacklab-opener",
+ "stacklab-store",
  "stacklab-training",
  "toml",
 ]

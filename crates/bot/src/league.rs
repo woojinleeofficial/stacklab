@@ -52,6 +52,57 @@ pub fn play_round(a: &BotConfig, b: &BotConfig, rs: &Arc<Ruleset>, seed: u64) ->
     }
 }
 
+/// A round where side 0 is "the user": also returns side 0's engine events and the board after
+/// each of its locks (for observations, spec 7.4) and the full replay.
+pub fn play_round_observed(
+    user: &BotConfig,
+    opponent: &BotConfig,
+    rs: &Arc<Ruleset>,
+    seed: u64,
+) -> (
+    RoundOutcome,
+    Vec<stacklab_engine::events::EventKind>,
+    Vec<stacklab_engine::Board>,
+) {
+    let mut v = Versus::new(
+        rs.clone(),
+        [seed, seed ^ 0xa5a5_5a5a],
+        [bot_handling(), bot_handling()],
+    );
+    let mut pa = BotPlayer::new(user.clone(), rs, seed.wrapping_mul(3));
+    let mut pb = BotPlayer::new(opponent.clone(), rs, seed.wrapping_mul(5).wrapping_add(1));
+    let (mut events, mut boards) = (Vec::new(), Vec::new());
+    let mut frames = 0;
+    while v.winner().is_none() && frames < ROUND_FRAME_CAP {
+        let ia = pa.frame_inputs(&v.players[0]);
+        let ib = pb.frame_inputs(&v.players[1]);
+        v.step([&ia, &ib]);
+        for e in v.players[0].events() {
+            if matches!(e.kind, stacklab_engine::events::EventKind::PieceLock { .. }) {
+                boards.push(v.players[0].board().clone());
+            }
+            events.push(e.kind);
+        }
+        let _ = v.players[1].events();
+        frames += 1;
+    }
+    let (winner, capped) = match v.winner() {
+        Some(w) => (w, false),
+        None => (
+            usize::from(v.players[0].board().height() > v.players[1].board().height()),
+            true,
+        ),
+    };
+    let o = RoundOutcome {
+        winner,
+        frames,
+        pieces: [v.players[0].stats().pieces, v.players[1].stats().pieces],
+        attack: [v.players[0].stats().attack, v.players[1].stats().attack],
+        capped,
+    };
+    (o, events, boards)
+}
+
 /// Game record: (preset i, preset j, score of i).
 pub type Game = (usize, usize, f64);
 
