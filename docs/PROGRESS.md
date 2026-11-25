@@ -6,7 +6,7 @@
 
 - **현재 단계:** STEP 7 클라우드 범위 완료 → Windows PC 성능 확인·사용자 인수(12.4 확인 지점 2) 대기. STEP 0은 2026-11-24 사용자 확인 완료.
 - **작업 기기:** 클라우드 리눅스(Windows PC 미연결). Windows 빌드·테스트는 GitHub Actions `windows-latest`.
-- **마지막 CI 결과:** STEP 7 커밋 결과는 아래 STEP 7 절 참고 (이전: run #16, STEP 6 ubuntu ✓ windows ✓).
+- **마지막 CI 결과:** run #24 (eaf5e16, STEP 7) ubuntu ✓ windows ✓ — 설치 프로그램 빌드·무인 설치·자가 점검·제거 ✓. 아티팩트 `stacklab-windows-installer`, `stacklab-windows-x64`.
 - **Windows PC에서 확인이 필요한 항목:** `docs/ACCEPTANCE_WINDOWS.md` (설치, 60FPS·고주사율, 입력 지연 16ms 이하, 조작감, 1세트 완주).
 
 ## STEP 0 — 설계 확정
@@ -202,7 +202,7 @@
 ### 테스트 (14.4)
 - 자동 플레이 완주 ✓, 강제 종료(자식 프로세스 abort) 후 체크포인트 복구 ✓, JSON 백업/복원 ✓, 스키마 마이그레이션 ✓
 - 비동기 봇 = 동기 봇(같은 최종 상태) ✓, 색 레이어 불변식(퍼즈) ✓, 설정 검증·독립 측정·기록 통계·40라인 정렬/리플레이 ✓
-- Windows CI 빌드·테스트·설치/제거 → CI 결과 참고
+- Windows CI 빌드·테스트·설치/제거 ✓ (run #24)
 
 ### Windows PC에서 확인이 필요한 항목 (12.4 확인 지점 2)
 - 60FPS 이상·고주사율 모니터, 입력 처리 추가 지연 16ms 이하(성능 오버레이·CSV로 측정), 실제 조작감, 사용자가 직접 1세트 완주
