@@ -8,6 +8,9 @@ use stacklab_training::problem::{Module, Problem};
 use stacklab_training::session::AttemptResult;
 use std::path::Path;
 
+pub mod matches;
+pub use matches::{Checkpoint, MatchRow, RoundRow, SprintRow};
+
 pub const SCHEMA_VERSION: u32 = 3;
 
 /// (version, SQL). Each runs in its own transaction and must end at that `user_version`.

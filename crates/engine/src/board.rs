@@ -180,6 +180,81 @@ impl Board {
     }
 }
 
+/// Display-only colour layer kept in lockstep with a [`Board`] (spec UI: locked cells keep their
+/// piece colour). Never part of the deterministic state hash.
+/// Codes: 0 empty, 1..=7 = `Piece::index() + 1`, [`GARBAGE_COLOR`] = garbage / preset terrain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellColors {
+    pub rows: [[u8; WIDTH]; MAX_ROWS],
+}
+
+pub const GARBAGE_COLOR: u8 = 8;
+
+impl Default for CellColors {
+    fn default() -> Self {
+        CellColors {
+            rows: [[0; WIDTH]; MAX_ROWS],
+        }
+    }
+}
+
+impl CellColors {
+    /// Colours every occupied cell of `b` as garbage (initial terrain).
+    pub fn from_board(b: &Board) -> CellColors {
+        let mut c = CellColors::default();
+        for (row, &bits) in c.rows.iter_mut().zip(b.rows.iter()) {
+            for (x, cell) in row.iter_mut().enumerate() {
+                if bits >> x & 1 == 1 {
+                    *cell = GARBAGE_COLOR;
+                }
+            }
+        }
+        c
+    }
+
+    pub fn place(&mut self, s: &PieceState) {
+        for (x, y) in s.cells() {
+            if (0..WIDTH as i8).contains(&x) && (0..MAX_ROWS as i8).contains(&y) {
+                self.rows[y as usize][x as usize] = s.piece.index() as u8 + 1;
+            }
+        }
+    }
+
+    /// Mirrors [`Board::clear_lines`]: `before` is the board after placing, before clearing.
+    pub fn clear_lines(&mut self, before: &Board) {
+        let mut w = 0;
+        for r in 0..MAX_ROWS {
+            if before.rows[r] != FULL_ROW {
+                self.rows[w] = self.rows[r];
+                w += 1;
+            }
+        }
+        for row in &mut self.rows[w..] {
+            *row = [0; WIDTH];
+        }
+    }
+
+    pub fn push_garbage(&mut self, n: usize, hole_x: usize) {
+        if n == 0 || n > MAX_ROWS {
+            return;
+        }
+        self.rows.copy_within(0..MAX_ROWS - n, n);
+        for row in &mut self.rows[..n] {
+            *row = [GARBAGE_COLOR; WIDTH];
+            row[hole_x] = 0;
+        }
+    }
+
+    /// Colour code at (x, y), 0 when empty / out of range.
+    pub fn at(&self, x: usize, y: usize) -> u8 {
+        self.rows
+            .get(y)
+            .and_then(|r| r.get(x))
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

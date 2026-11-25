@@ -123,6 +123,9 @@ struct StackApp {
     eval_report: Option<EvalReport>,
     rs: Arc<Ruleset>,
     rec_msg: Option<String>,
+    /// Checkpoint: the problem on screen (JSON) and the round in progress (match id).
+    current_problem: Option<String>,
+    open_round: Option<String>,
 }
 
 fn data_dir() -> std::path::PathBuf {
@@ -172,10 +175,15 @@ impl StackApp {
         let store = std::fs::create_dir_all(data_dir())
             .ok()
             .and_then(|_| Store::open(&data_dir().join("stacklab.db")).ok());
-        let load = |k: &str| store.as_ref().and_then(|s| s.get_state(k).ok().flatten());
-        let st = load("training")
-            .and_then(|j| serde_json::from_str::<TrainingState>(&j).ok())
+        let ckpt = store
+            .as_ref()
+            .and_then(|s| s.read_checkpoint().ok().flatten());
+        let st = ckpt
+            .as_ref()
+            .and_then(|c| serde_json::from_str::<TrainingState>(&c.training).ok())
             .unwrap_or_else(|| TrainingState::new(&policy, 1));
+        let current_problem = ckpt.as_ref().and_then(|c| c.current_problem.clone());
+        let interrupted = ckpt.as_ref().and_then(|c| c.open_round.clone());
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -195,7 +203,9 @@ impl StackApp {
             .map_or(("tki".to_string(), "free-transition".to_string()), |l| {
                 (l.primary.clone(), l.fallback.clone())
             });
-        StackApp {
+        let mut app = StackApp {
+            current_problem,
+            open_round: None,
             s: Strings::korean(),
             worker: spawn_worker(rs.clone(), policy.clone(), cc.egui_ctx.clone()),
             rs,
@@ -216,19 +226,63 @@ impl StackApp {
             coverage: stacklab_opener::library::coverage_table(),
             pick,
             opener_msg: None,
+        };
+        if let Some(mid) = interrupted {
+            app.void_interrupted_round(&mid);
         }
+        app
     }
 
-    fn persist(&self) {
-        if let Some(st) = &self.store {
-            let _ = st.set_state(
-                "training",
-                &serde_json::to_string(&self.st).unwrap_or_default(),
-            );
+    /// Spec 11: a round cut off by a forced exit is void (never a loss) and replayed.
+    fn void_interrupted_round(&mut self, match_id: &str) {
+        if let Some(store) = &self.store {
+            if let Ok(Some(m)) = store.load_match(match_id) {
+                let idx = store.rounds(match_id).map_or(0, |r| r.len() as u32);
+                let _ = store.save_round(&stacklab_store::RoundRow {
+                    match_id: match_id.into(),
+                    round_index: idx,
+                    result: None,
+                    void: true,
+                    replay: None,
+                    observations: None,
+                });
+                if m.kind == "evaluation" {
+                    let _ = self.st.void_round(
+                        &m.bot_preset_id,
+                        m.bot_rating,
+                        0.0,
+                        m.calibration_version,
+                    );
+                }
+            }
+        }
+        self.last_report = Some(self.s.get("round_voided"));
+        self.open_round = None;
+        self.persist();
+    }
+
+    /// Writes the checkpoint atomically (flow state + problem on screen + open round).
+    fn persist(&mut self) {
+        let c = stacklab_store::Checkpoint {
+            training: serde_json::to_string(&self.st).unwrap_or_default(),
+            current_problem: self.current_problem.clone(),
+            open_round: self.open_round.clone(),
+        };
+        if let Some(st) = self.store.as_mut() {
+            let _ = st.write_checkpoint(&c);
         }
     }
 
     fn request_next(&mut self) {
+        // resume the problem that was on screen at the last checkpoint (not counted yet)
+        if let Some(p) = self
+            .current_problem
+            .as_deref()
+            .and_then(|j| serde_json::from_str::<Problem>(j).ok())
+        {
+            self.open_problem(Some(p));
+            return;
+        }
         let req = match self.st.next_request() {
             Some(ProblemRequest::Anchor { module, k }) => Request::Anchor(module, k),
             Some(ProblemRequest::Slot { module, seed }) => {
@@ -385,10 +439,36 @@ impl StackApp {
         }
     }
 
+    fn open_problem(&mut self, p: Option<Problem>) {
+        let session = p
+            .as_ref()
+            .and_then(|p| AttemptSession::new(p, self.handling).ok());
+        self.screen = match session {
+            Some(session) => {
+                self.current_problem = p.and_then(|p| serde_json::to_string(&p).ok());
+                self.persist();
+                Screen::Play(Box::new(Playing {
+                    session,
+                    first: None,
+                    hint: None,
+                    answer: Vec::new(),
+                    sim_time: 0.0,
+                    pending: Vec::new(),
+                    finished: false,
+                }))
+            }
+            None => {
+                self.current_problem = None;
+                Screen::Dashboard
+            }
+        };
+    }
+
     /// Records the slot with the first decided result and moves on (retries never add problems).
     fn finish_slot(&mut self, play: &Playing) {
         let p = &play.session.problem;
         let first = play.first.clone().unwrap_or_else(|| play.session.result());
+        self.current_problem = None;
         if let Some(report) = self.st.record_problem(p, first, &self.policy) {
             self.last_report = Some(self.s.fmt(
                 "cycle_done",
@@ -621,6 +701,7 @@ impl StackApp {
                                             ghost: None,
                                             targets: vec![],
                                             colored: b.pieces.clone(),
+                                            colors: None,
                                         },
                                     );
                                     let (n, s) = self
@@ -1189,6 +1270,32 @@ impl StackApp {
             in_band,
             seed,
         );
+        let mut m = m;
+        let (mid, kind_s) = match kind {
+            MatchKind::Mini(k) => (format!("set{}-mini{k}", self.st.set.number), "mini"),
+            MatchKind::DeferredMini(i) => {
+                (format!("set{}-mini{}", self.st.set.number, i + 1), "mini")
+            }
+            MatchKind::Evaluation => (format!("set{}-eval", self.st.set.number), "evaluation"),
+        };
+        m.match_id = mid.clone();
+        if let Some(store) = &self.store {
+            let _ = store.begin_match(&stacklab_store::MatchRow {
+                id: mid.clone(),
+                kind: kind_s.into(),
+                bot_preset_id: m.bot_id.clone(),
+                bot_rating: m.bot_rating,
+                calibration_version: self.bots.calibration_version,
+                out_of_band: !in_band,
+                ruleset_version: self.rs.meta.version.clone(),
+                status: "in_progress".into(),
+                result: None,
+                rating_delta: None,
+                created_at: String::new(),
+            });
+        }
+        self.open_round = Some(mid);
+        self.persist();
         self.screen = Screen::Match(Box::new(m));
     }
 
@@ -1221,6 +1328,21 @@ impl StackApp {
             .as_ref()
             .and_then(|s| s.has_automatic_recommendation().ok())
             .unwrap_or(true);
+        if let Some(store) = &self.store {
+            let idx = store.rounds(&m.match_id).map_or(0, |r| r.len() as u32);
+            let _ = store.save_round(&stacklab_store::RoundRow {
+                match_id: m.match_id.clone(),
+                round_index: idx,
+                result: Some(won),
+                void: false,
+                replay: Some(m.log.to_json()),
+                observations: serde_json::to_string(&obs).ok(),
+            });
+            if !matches!(m.kind, MatchKind::Evaluation) {
+                let _ = store.finish_match(&m.match_id, "completed", Some(won), None);
+            }
+        }
+        self.open_round = None;
         if let Ok(Some(ev)) = self.st.record_round(
             kind,
             won,
@@ -1232,6 +1354,14 @@ impl StackApp {
             &self.policy,
             exists,
         ) {
+            if let Some(store) = &self.store {
+                let _ = store.finish_match(
+                    &m.match_id,
+                    "completed",
+                    Some(ev.wins > ev.losses),
+                    Some(ev.after.rating - ev.before.rating),
+                );
+            }
             self.eval_report = Some(EvalReport {
                 wins: ev.wins,
                 losses: ev.losses,
@@ -1530,6 +1660,7 @@ impl StackApp {
                     ghost: game.ghost(),
                     targets,
                     colored: vec![],
+                    colors: Some(game.colors()),
                 },
             );
         });
@@ -1572,18 +1703,7 @@ impl StackApp {
 impl eframe::App for StackApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if let Ok(p) = self.worker.1.try_recv() {
-            self.screen = match p.and_then(|p| AttemptSession::new(&p, self.handling).ok()) {
-                Some(session) => Screen::Play(Box::new(Playing {
-                    session,
-                    first: None,
-                    hint: None,
-                    answer: Vec::new(),
-                    sim_time: 0.0,
-                    pending: Vec::new(),
-                    finished: false,
-                })),
-                None => Screen::Dashboard,
-            };
+            self.open_problem(p);
         }
         if std::env::var("STACKLAB_AUTOPLAY").is_ok()
             && matches!(self.screen, Screen::Dashboard)

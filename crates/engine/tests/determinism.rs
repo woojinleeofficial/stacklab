@@ -56,6 +56,15 @@ fn check_invariants(g: &Game) {
         assert_eq!(r & !FULL_ROW, 0, "no cells outside the matrix");
         assert_ne!(r, FULL_ROW, "full rows are always cleared");
     }
+    for (y, r) in g.board().rows.iter().enumerate() {
+        for x in 0..10 {
+            assert_eq!(
+                r >> x & 1 == 1,
+                g.colors().at(x, y) != 0,
+                "colour layer tracks cell ({x},{y})"
+            );
+        }
+    }
     if let Some(p) = g.active_piece() {
         assert!(g.board().fits(&p), "active piece never overlaps the stack");
         assert!(!g.is_over());

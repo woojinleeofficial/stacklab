@@ -162,6 +162,56 @@ pub struct VersusReplay {
 }
 
 impl VersusReplay {
+    /// An empty log for a match that starts now (record frames with [`Self::step`]).
+    pub fn start(
+        v: &Versus,
+        seeds: [u64; 2],
+        handling: [Handling; 2],
+        initial: [Option<InitialState>; 2],
+    ) -> VersusReplay {
+        VersusReplay {
+            format: REPLAY_FORMAT,
+            ruleset_version: v.players[0].ruleset().meta.version.clone(),
+            seeds,
+            handling,
+            initial,
+            frames: 0,
+            inputs: [Vec::new(), Vec::new()],
+            final_hash: v.state_hash(),
+        }
+    }
+
+    /// Steps `v` one frame and records the inputs the engine consumes (same clamping as
+    /// [`Recorder::step`]).
+    pub fn step(&mut self, v: &mut Versus, inputs: [&[InputEvent]; 2]) {
+        let spf = v.players[0].ruleset().timing.subframes_per_frame as u64;
+        for (i, ins) in inputs.iter().enumerate() {
+            let start = v.players[i].tick() * spf;
+            let end = start + spf;
+            for e in ins.iter().filter(|e| e.time < end) {
+                let mut e = *e;
+                e.time = e.time.max(start);
+                self.inputs[i].push(e);
+            }
+        }
+        v.step(inputs);
+        self.frames += 1;
+        self.final_hash = v.state_hash();
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("replay serialises")
+    }
+
+    pub fn from_json(s: &str) -> Result<VersusReplay, serde_json::Error> {
+        serde_json::from_str(s)
+    }
+
+    /// Re-simulates and compares the final state hash.
+    pub fn verify(&self) -> Result<bool, ReplayError> {
+        Ok(self.run()?.state_hash() == self.final_hash)
+    }
+
     pub fn run(&self) -> Result<Versus, ReplayError> {
         let rs = ruleset_by_version(&self.ruleset_version)
             .ok_or_else(|| ReplayError::UnknownRuleset(self.ruleset_version.clone()))?;

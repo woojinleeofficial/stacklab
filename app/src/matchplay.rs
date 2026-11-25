@@ -8,6 +8,7 @@ use stacklab_bot::BotConfig;
 use stacklab_engine::board::Board;
 use stacklab_engine::events::EventKind;
 use stacklab_engine::game::{Handling, InputEvent};
+use stacklab_engine::replay::VersusReplay;
 use stacklab_engine::versus::Versus;
 use stacklab_engine::Ruleset;
 use std::sync::Arc;
@@ -35,6 +36,10 @@ pub struct MatchPlay {
     pub user_events: Vec<EventKind>,
     pub user_boards: Vec<Board>,
     pub finished: Option<bool>,
+    /// Replay of this round (stored with the round, spec 10.1).
+    pub log: VersusReplay,
+    /// Match id in the store.
+    pub match_id: String,
 }
 
 impl MatchPlay {
@@ -51,13 +56,15 @@ impl MatchPlay {
         seed: u64,
     ) -> MatchPlay {
         let bot = BotPlayer::new(cfg.clone(), &rs, seed ^ 0xb07);
+        let seeds = [seed, seed.rotate_left(17) ^ 0x51ed];
+        let hs = [handling, bot_handling()];
+        let versus = Versus::new(rs, seeds, hs);
+        let log = VersusReplay::start(&versus, seeds, hs, [None, None]);
         MatchPlay {
             kind,
-            versus: Versus::new(
-                rs,
-                [seed, seed.rotate_left(17) ^ 0x51ed],
-                [handling, bot_handling()],
-            ),
+            log,
+            match_id: String::new(),
+            versus,
             bot,
             bot_id: cfg.id,
             bot_rating,
@@ -84,7 +91,7 @@ impl MatchPlay {
         while self.sim_time + 1.0 / 60.0 <= now && steps < 8 {
             let user = std::mem::take(&mut self.pending);
             let bot = self.bot.frame_inputs(&self.versus.players[1]);
-            self.versus.step([&user, &bot]);
+            self.log.step(&mut self.versus, [&user, &bot]);
             for e in self.versus.players[0].events() {
                 if matches!(e.kind, EventKind::PieceLock { .. }) {
                     self.user_boards
@@ -132,6 +139,7 @@ impl MatchPlay {
                     ghost: if i == 0 { g.ghost() } else { None },
                     targets: vec![],
                     colored: vec![],
+                    colors: Some(g.colors()),
                 },
             );
             // garbage meter (left of the field)

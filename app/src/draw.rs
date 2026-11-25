@@ -29,6 +29,8 @@ pub struct FieldView<'a> {
     pub targets: Vec<(PieceState, Color32)>,
     /// Pieces drawn filled in their own colours (opener diagrams).
     pub colored: Vec<PieceState>,
+    /// Colour layer of the locked cells (None: uniform stack colour).
+    pub colors: Option<&'a stacklab_engine::board::CellColors>,
 }
 
 pub fn field(painter: &egui::Painter, rect: Rect, v: &FieldView) -> f32 {
@@ -57,10 +59,16 @@ pub fn field(painter: &egui::Painter, rect: Rect, v: &FieldView) -> f32 {
                 painter.rect_stroke(r, 0.0, Stroke::new(1.0, GRID), StrokeKind::Inside);
             }
             if v.board.occupied(x, y) {
+                let code = v.colors.map_or(0, |c| c.at(x as usize, y as usize));
+                let base = match code {
+                    1..=7 => piece_color(stacklab_engine::piece::ALL_PIECES[code as usize - 1])
+                        .gamma_multiply(0.85),
+                    _ => STACK,
+                };
                 let c = if y >= 20 {
-                    STACK.gamma_multiply(0.5)
+                    base.gamma_multiply(0.5)
                 } else {
-                    STACK
+                    base
                 };
                 painter.rect_filled(r.shrink(1.0), 2.0, c);
             }

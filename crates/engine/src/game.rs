@@ -5,7 +5,7 @@
 //! input events carry absolute sub-frame timestamps and are applied in order.
 
 use crate::attack::{on_lock, surge_amount, ChainState, ClearInfo};
-use crate::board::{Board, PieceState, MAX_ROWS, WIDTH};
+use crate::board::{Board, CellColors, PieceState, MAX_ROWS, WIDTH};
 use crate::events::{Event, EventKind, Fnv, MatchEndReason, TopOutReason};
 use crate::movegen::MoveRules;
 use crate::piece::Piece;
@@ -127,6 +127,7 @@ pub struct Game {
     spf: u64,
 
     board: Board,
+    colors: CellColors,
     bag: Option<Bag7>,
     queue: VecDeque<Piece>,
     hold: Option<Piece>,
@@ -182,6 +183,7 @@ impl Game {
             mode,
             spf,
             board: Board::default(),
+            colors: CellColors::default(),
             bag: Some(Bag7::new(seed, &rs.queue.bag_base_order)),
             queue: VecDeque::new(),
             hold: None,
@@ -213,6 +215,7 @@ impl Game {
             for (y, &r) in init.rows.iter().enumerate().take(MAX_ROWS) {
                 g.board.rows[y] = r & crate::board::FULL_ROW;
             }
+            g.colors = CellColors::from_board(&g.board);
             g.queue.extend(init.queue.iter().copied());
             g.hold = init.hold;
             g.chain = ChainState {
@@ -241,6 +244,11 @@ impl Game {
     pub fn ruleset(&self) -> &Ruleset {
         &self.rs
     }
+    /// Display colours of the locked cells (not part of the state hash).
+    pub fn colors(&self) -> &CellColors {
+        &self.colors
+    }
+
     pub fn board(&self) -> &Board {
         &self.board
     }
@@ -706,6 +714,8 @@ impl Game {
         let s = a.state;
         let spin = self.rules.spins.detect(&self.board, &s, a.last_rot);
         self.board.place(&s);
+        self.colors.place(&s);
+        self.colors.clear_lines(&self.board);
         let lines = self.board.clear_lines();
         let pc = lines > 0 && self.board.is_empty();
         self.stats.pieces += 1;
@@ -871,6 +881,7 @@ impl Game {
                 if self.garbage_rng.chance_pm(pm) {
                     self.change_hole();
                 }
+                self.colors.push_garbage(1, self.hole as usize);
                 if !self.board.push_garbage(1, self.hole as usize) {
                     return false;
                 }
