@@ -179,6 +179,19 @@ impl ProblemService {
         })
     }
 
+    /// Independent-test problem (spec 6.4): D = 1500 from the test's fresh seed, verified,
+    /// never one of `seen` (ids served before).
+    pub fn independent(&self, m: Module, seed: u64, seen: &[String]) -> Option<Problem> {
+        (0..30u64).find_map(|retry| {
+            let mut p = self.generate(m, crate::independent::DIFFICULTY, seed + retry * 7919)?;
+            if seen.contains(&p.id) || !verify(&p).valid {
+                return None;
+            }
+            p.difficulty = crate::independent::DIFFICULTY;
+            Some(p)
+        })
+    }
+
     /// Next problem for a scheduled slot: an anchor with the policy share, else a problem
     /// generated at the calibrated request for 75 % expected success.
     pub fn next_for(

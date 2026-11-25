@@ -54,6 +54,12 @@ pub struct MatchPolicy {
 pub struct CyclePolicy {
     pub problems_per_cycle: u32,
     pub cycles_per_set: u32,
+    #[serde(default = "three")]
+    pub independent_test_every_sets: u32,
+}
+
+fn three() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -140,6 +146,7 @@ mod tests {
         let p = Policy::bundled();
         assert_eq!(p.cycle.problems_per_cycle, 12);
         assert_eq!(p.cycle.cycles_per_set, 3);
+        assert_eq!(p.cycle.independent_test_every_sets, 3);
         assert_eq!(p.rating.initial_rating, 1500.0);
         assert_eq!(p.rating.initial_rd, 350.0);
         assert_eq!(p.difficulty.target_success, 0.75);
