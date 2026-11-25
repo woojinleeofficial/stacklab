@@ -78,6 +78,19 @@ impl TrainingState {
         self.seed_state
     }
 
+    /// UI-02 "진단 건너뛰기": start training with the initial (provisional, RD 350) ratings.
+    /// Only before any diagnosis problem was recorded.
+    pub fn skip_diagnosis(&mut self, policy: &Policy) -> Result<(), SetError> {
+        if !self.diagnosis || !self.cycle.results.is_empty() {
+            return Err(SetError::WrongPhase(self.set.phase));
+        }
+        self.set.diagnosis_done()?;
+        self.diagnosis = false;
+        let mut rng = Rng::new(self.next_seed());
+        self.cycle = Cycle::new(plan_cycle(&self.profile, policy, &mut rng));
+        Ok(())
+    }
+
     /// Problems are served only in DIAGNOSIS / TRAINING phases (matches come after 12).
     pub fn next_request(&mut self) -> Option<ProblemRequest> {
         if !matches!(self.set.phase, Phase::Diagnosis | Phase::Training(_)) {
@@ -257,5 +270,25 @@ impl TrainingState {
             _ => 3,
         };
         (c, self.cycle.results.len() + 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnosis_can_be_skipped_only_before_it_starts() {
+        let policy = Policy::bundled();
+        let mut st = TrainingState::new(&policy, 3);
+        st.skip_diagnosis(&policy).unwrap();
+        assert!(matches!(st.set.phase, Phase::Training(1)));
+        assert!(!st.diagnosis);
+        assert_eq!(st.cycle.plan.len(), 12);
+        assert!(matches!(
+            st.next_request(),
+            Some(ProblemRequest::Slot { .. })
+        ));
+        assert!(st.skip_diagnosis(&policy).is_err());
     }
 }

@@ -27,8 +27,31 @@ jobs:
         run: cargo test --workspace --release
       - name: build examples
         run: cargo build --workspace --release --examples
+      - name: third-party licences (up to date, no GPL)
+        if: runner.os == 'Linux'
+        run: python3 tools/licenses.py --check
       - name: build app (release)
         run: cargo build --release -p stacklab-app
+      - name: build installer (Inno Setup)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          $ver = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq "stacklab-app" | Select-Object -ExpandProperty version
+          & $iscc "/DAppVersion=$ver" installer\stacklab.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+      - name: installer silent install / self-check / uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./installer/ci-install-test.ps1
+      - name: upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stacklab-windows-installer
+          path: target/installer/*.exe
+          if-no-files-found: error
       - name: upload Windows executable
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4

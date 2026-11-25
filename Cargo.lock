@@ -3081,7 +3081,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stacklab-app"
-version = "0.0.1"
+version = "0.9.0"
 dependencies = [
  "eframe",
  "serde",
@@ -3096,7 +3096,7 @@ dependencies = [
 
 [[package]]
 name = "stacklab-bot"
-version = "0.0.1"
+version = "0.9.0"
 dependencies = [
  "serde",
  "stacklab-engine",
@@ -3108,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "stacklab-engine"
-version = "0.0.1"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3117,7 +3117,7 @@ dependencies = [
 
 [[package]]
 name = "stacklab-opener"
-version = "0.0.1"
+version = "0.9.0"
 dependencies = [
  "serde",
  "stacklab-engine",
@@ -3127,14 +3127,14 @@ dependencies = [
 
 [[package]]
 name = "stacklab-solver"
-version = "0.0.1"
+version = "0.9.0"
 dependencies = [
  "stacklab-engine",
 ]
 
 [[package]]
 name = "stacklab-store"
-version = "0.0.1"
+version = "0.9.0"
 dependencies = [
  "rusqlite",
  "serde",
@@ -3146,7 +3146,7 @@ dependencies = [
 
 [[package]]
 name = "stacklab-training"
-version = "0.0.1"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",

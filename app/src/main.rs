@@ -142,6 +142,9 @@ struct StackApp {
 }
 
 fn data_dir() -> std::path::PathBuf {
+    if let Some(d) = std::env::var_os("STACKLAB_DATA_DIR") {
+        return std::path::PathBuf::from(d);
+    }
     let base = std::env::var_os("APPDATA")
         .map(std::path::PathBuf::from)
         .or_else(|| {
@@ -556,9 +559,48 @@ impl StackApp {
         }
     }
 
+    /// UI-02 first-run guide: ① keys ② openers ③ TL record (optional) ④ diagnosis / skip.
+    fn first_run_guide(&mut self, ui: &mut egui::Ui) {
+        if !(self.st.diagnosis && self.st.cycle.results.is_empty()) {
+            return;
+        }
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.label(RichText::new(self.s.get("setup_title")).strong());
+            ui.horizontal(|ui| {
+                ui.label(self.s.get("setup_keys"));
+                if ui.button(self.s.get("settings")).clicked() {
+                    self.screen = Screen::Settings;
+                }
+            });
+            ui.horizontal(|ui| {
+                let done = if self.st.profile.loadout.is_some() {
+                    " ✓"
+                } else {
+                    ""
+                };
+                ui.label(format!("{}{done}", self.s.get("setup_openers")));
+                if ui.button(self.s.get("openers")).clicked() {
+                    self.screen = Screen::Openers;
+                }
+            });
+            ui.label(self.s.get("setup_tl"));
+            ui.horizontal(|ui| {
+                ui.label(self.s.get("setup_diagnosis"));
+                if ui.button(self.s.get("skip_diagnosis")).clicked()
+                    && self.st.skip_diagnosis(&self.policy).is_ok()
+                {
+                    self.current_problem = None;
+                    self.last_report = Some(self.s.get("diagnosis_skipped"));
+                    self.persist();
+                }
+            });
+        });
+    }
+
     fn dashboard(&mut self, ui: &mut egui::Ui) {
         ui.heading(self.s.get("app_title"));
         ui.add_space(8.0);
+        self.first_run_guide(ui);
         let label = if self.st.cycle.results.is_empty() && self.st.diagnosis {
             self.s.get("start_training")
         } else {
@@ -1468,6 +1510,11 @@ impl StackApp {
             MatchKind::Mini(k) => self.s.fmt("mini_label", &[("k", k.to_string())]),
             MatchKind::DeferredMini(i) => self.s.fmt("mini_label", &[("k", (i + 1).to_string())]),
         };
+        let header = if self.paused {
+            format!("{header} · {}", self.s.get("paused"))
+        } else {
+            header
+        };
         let opp = self.s.fmt(
             "opponent",
             &[
@@ -1564,6 +1611,9 @@ impl StackApp {
         let mut next = false;
         egui::Panel::left("info").exact_size(260.0).show(ui, |ui| {
             ui.label(RichText::new(self.progress_text()).strong());
+            if self.paused {
+                ui.colored_label(Color32::YELLOW, self.s.get("paused"));
+            }
             ui.label(format!(
                 "{} · D {:.0}",
                 self.module_name(p.module),
@@ -1832,7 +1882,60 @@ impl eframe::App for StackApp {
     }
 }
 
+/// `stacklab --self-check`: headless smoke test used by the installer CI job. Opens (and
+/// migrates) the database, re-runs a recorded replay, serves and verifies one problem.
+/// Exit code 0 = OK. Writes a one-line report to `<data dir>/self-check.txt`.
+fn self_check() -> Result<String, String> {
+    std::fs::create_dir_all(data_dir()).map_err(|e| e.to_string())?;
+    let store = Store::open(&data_dir().join("stacklab.db")).map_err(|e| e.to_string())?;
+    let schema = store.schema_version().map_err(|e| e.to_string())?;
+    let rs = Arc::new(Ruleset::tl_s2());
+    let mut rec = stacklab_engine::replay::Recorder::new(
+        rs.clone(),
+        7,
+        Default::default(),
+        stacklab_engine::game::Mode::Free,
+        None,
+    );
+    for f in 0..300u64 {
+        let ev = if f % 30 == 0 {
+            vec![InputEvent {
+                time: f * 10,
+                key: stacklab_engine::game::Key::HardDrop,
+                down: true,
+            }]
+        } else {
+            vec![]
+        };
+        rec.step(&ev);
+    }
+    if !rec.finish().verify().map_err(|e| format!("{e:?}"))? {
+        return Err("replay mismatch".into());
+    }
+    let svc = ProblemService::new(rs, Policy::bundled());
+    let p = svc.anchor(Module::A, 0).ok_or("no problem")?;
+    if !stacklab_training::validator::verify(&p).valid {
+        return Err("problem not verified".into());
+    }
+    Ok(format!(
+        "StackLab {} self-check OK: schema {schema}, replay ok, problem {}",
+        env!("CARGO_PKG_VERSION"),
+        p.id
+    ))
+}
+
 fn main() -> eframe::Result {
+    if std::env::args().any(|a| a == "--self-check") {
+        let r = self_check();
+        let line = match &r {
+            Ok(s) => s.clone(),
+            Err(e) => format!("self-check FAILED: {e}"),
+        };
+        let _ = std::fs::create_dir_all(data_dir());
+        let _ = std::fs::write(data_dir().join("self-check.txt"), &line);
+        println!("{line}");
+        std::process::exit(if r.is_ok() { 0 } else { 1 });
+    }
     // wgpu by default (DX12/Vulkan on Windows); STACKLAB_RENDERER=glow selects OpenGL, which
     // also works under Xvfb/llvmpipe for headless checks.
     let renderer = if std::env::var("STACKLAB_RENDERER").is_ok_and(|v| v == "glow") {

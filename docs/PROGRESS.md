@@ -4,10 +4,10 @@
 
 ## 현재 상태
 
-- **현재 단계:** STEP 6 완료 → 다음 STEP 7(제품화, Windows PC 확인 포함). STEP 0은 2026-11-24 사용자 확인 완료.
+- **현재 단계:** STEP 7 클라우드 범위 완료 → Windows PC 성능 확인·사용자 인수(12.4 확인 지점 2) 대기. STEP 0은 2026-11-24 사용자 확인 완료.
 - **작업 기기:** 클라우드 리눅스(Windows PC 미연결). Windows 빌드·테스트는 GitHub Actions `windows-latest`.
-- **마지막 CI 결과:** run #16 (986da43, STEP 6) ubuntu ✓ windows ✓ — Windows 실행 파일 아티팩트 `stacklab-windows-x64`.
-- **Windows PC에서 확인이 필요한 항목:** CI 아티팩트 stacklab.exe 실행(한글 폰트·wgpu·키 입력·대결 화면 조작감). 성능 항목은 STEP 7.
+- **마지막 CI 결과:** STEP 7 커밋 결과는 아래 STEP 7 절 참고 (이전: run #16, STEP 6 ubuntu ✓ windows ✓).
+- **Windows PC에서 확인이 필요한 항목:** `docs/ACCEPTANCE_WINDOWS.md` (설치, 60FPS·고주사율, 입력 지연 16ms 이하, 조작감, 1세트 완주).
 
 ## STEP 0 — 설계 확정
 
@@ -185,9 +185,29 @@
 - 경기 기록(Match/Round, 리플레이) DB 저장은 STEP 7에서(현재 세트 상태는 app_state JSON)
 - 적합도 가중치·환산식은 초기값이라 실사용 데이터로 보정 필요
 
-## 다음 단계 (STEP 7 제품화)
-1. 대시보드·통계·설정 화면(키 설정·DAS/ARR/SDF/DCD·중복 검사), 백업/복원 UI, 블록 색 유지
-2. 입력·봇 탐색을 UI와 분리한 스레드, 성능 측정 오버레이(FPS·프레임 시간·입력 지연)와 로그
-3. 경기 기록 DB 저장, 강제 종료 후 체크포인트 복구
-4. 자동 플레이 스크립트로 36문제 + 미니 2회 + BO3 + 추천 완주(14.4)
-5. Windows 설치 프로그램, 사용 설명서, Windows PC 성능 확인과 사용자 인수(12.4 확인 지점 2)
+## STEP 7 — 제품화 (클라우드 범위 완료, Windows PC 확인 대기)
+
+### 완료
+- 학습 흐름 상태 머신 `training/src/flow.rs`(앱·테스트 공용), 진단 건너뛰기, 대시보드 최초 설정 안내(UI-02)
+- 자동 플레이 스크립트 `crates/bot/tests/playthrough.rs`: 봇이 사용자 역할로 진단 + 36문제 + 미니 2회 + BO3 + 1회 추천(저장·2단계 승인·적용·멱등)까지 완주, 모든 라운드 리플레이 재검증
+- 엔진 셀 색상 레이어(고정 블록 색 유지, 결정성 무관)
+- 경기·라운드 DB 저장(리플레이·관측 통계), 문제 시도 저장, 원자적 체크포인트와 강제 종료 복구(무효 라운드 처리)
+- UI-09: 설정(키 바인딩 중복 검사, DAS/ARR/DCD/SDF를 TETR.IO 단위·범위로), 통계 탭(기술별·경기·40라인·독립 측정·TL 기록·백업/복원)
+- 40라인 모드(카운트다운, 기록·리플레이 저장), 독립 실력 측정(3세트마다 제안, 언제든 실행)
+- 봇 탐색 작업 스레드 분리(결정성 유지), 일시정지, 성능 측정 오버레이 + CSV 로그
+- 설치 프로그램 `installer/stacklab.iss`(Inno Setup), `stacklab.exe --self-check`, CI 무인 설치/자가 점검/제거 테스트
+- 사용 설명서 `docs/USER_GUIDE.md`, 제3자 라이선스 자동 생성 `tools/licenses.py`(CI 검사), Windows 인수 체크리스트 `docs/ACCEPTANCE_WINDOWS.md`
+- 스크린샷: `docs/screenshots/step7_settings.png`, `step7_stats.png`, `step7_match_perf.png`
+
+### 테스트 (14.4)
+- 자동 플레이 완주 ✓, 강제 종료(자식 프로세스 abort) 후 체크포인트 복구 ✓, JSON 백업/복원 ✓, 스키마 마이그레이션 ✓
+- 비동기 봇 = 동기 봇(같은 최종 상태) ✓, 색 레이어 불변식(퍼즈) ✓, 설정 검증·독립 측정·기록 통계·40라인 정렬/리플레이 ✓
+- Windows CI 빌드·테스트·설치/제거 → CI 결과 참고
+
+### Windows PC에서 확인이 필요한 항목 (12.4 확인 지점 2)
+- 60FPS 이상·고주사율 모니터, 입력 처리 추가 지연 16ms 이하(성능 오버레이·CSV로 측정), 실제 조작감, 사용자가 직접 1세트 완주
+- 절차: `docs/ACCEPTANCE_WINDOWS.md`
+
+## 다음 단계
+1. Windows PC 연결 후 `docs/ACCEPTANCE_WINDOWS.md` 절차로 성능 확인(14.4 앞 두 항목)
+2. 사용자 1세트 직접 완주와 인수(12.4 확인 지점 2) → 피드백 반영 → 1.0.0
