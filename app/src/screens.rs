@@ -56,6 +56,7 @@ impl StackApp {
         let map = self.key_actions();
         let mut commands = Vec::new();
         let mut toggle = false;
+        let before = pending.len();
         ui.input(|i| {
             for e in &i.events {
                 if let egui::Event::Key {
@@ -88,6 +89,9 @@ impl StackApp {
         });
         if toggle {
             self.paused = !self.paused;
+        }
+        if pending.len() > before {
+            self.perf.inputs_read();
         }
         if self.paused {
             pending.clear();
@@ -304,6 +308,7 @@ impl StackApp {
                 sp.sim_time = now;
             }
             let mut steps = 0;
+            let t0 = std::time::Instant::now();
             while sp.sim_time + 1.0 / 60.0 <= now && steps < 8 && !sp.rec.game.is_over() {
                 let inputs = std::mem::take(&mut sp.pending);
                 sp.rec.step(&inputs);
@@ -311,6 +316,8 @@ impl StackApp {
                 sp.sim_time += 1.0 / 60.0;
                 steps += 1;
             }
+            self.perf
+                .sim_ran(steps, t0.elapsed().as_secs_f64() * 1000.0);
             if steps == 8 {
                 sp.sim_time = now;
             }

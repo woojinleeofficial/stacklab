@@ -5,6 +5,7 @@
 
 mod draw;
 mod matchplay;
+mod perf;
 mod screens;
 mod strings;
 
@@ -137,6 +138,7 @@ struct StackApp {
     stats_tab: u8,
     backup_msg: Option<String>,
     restore_confirm: Option<std::path::PathBuf>,
+    perf: perf::Perf,
 }
 
 fn data_dir() -> std::path::PathBuf {
@@ -225,6 +227,10 @@ impl StackApp {
             .and_then(|s| s.get_state("independent").ok().flatten())
             .and_then(|j| serde_json::from_str(&j).ok())
             .unwrap_or_default();
+        let mut settings = settings;
+        if std::env::var("STACKLAB_PERF").is_ok() {
+            settings.perf_overlay = true; // headless measurement runs
+        }
         let mut app = StackApp {
             settings,
             settings_msg: None,
@@ -235,6 +241,7 @@ impl StackApp {
             stats_tab: 0,
             backup_msg: None,
             restore_confirm: None,
+            perf: perf::Perf::default(),
             current_problem,
             open_round: None,
             s: Strings::korean(),
@@ -1441,7 +1448,11 @@ impl StackApp {
             m.sim_time = now;
             m.pending.clear();
         } else {
-            m.advance(now);
+            let t0 = std::time::Instant::now();
+            let steps = m.advance(now);
+            self.perf
+                .sim_ran(steps, t0.elapsed().as_secs_f64() * 1000.0);
+            self.perf.bot(m.bot.last_think_ms, m.stalled);
         }
         ui.ctx().request_repaint();
         let (w, l) = self.st.set.score();
@@ -1523,6 +1534,7 @@ impl StackApp {
                 play.sim_time = now;
             }
             let mut steps = 0;
+            let t0 = std::time::Instant::now();
             while play.sim_time + 1.0 / 60.0 <= now && steps < 8 {
                 let inputs = std::mem::take(&mut play.pending);
                 play.session.step(&inputs);
@@ -1536,6 +1548,8 @@ impl StackApp {
                     break;
                 }
             }
+            self.perf
+                .sim_ran(steps, t0.elapsed().as_secs_f64() * 1000.0);
             if steps == 8 {
                 play.sim_time = now; // don't spiral after a stall
             }
@@ -1723,7 +1737,8 @@ impl StackApp {
 }
 
 impl eframe::App for StackApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.perf.begin_frame(frame.info().cpu_usage);
         if let Ok(p) = self.worker.1.try_recv() {
             self.open_problem(p);
         }
@@ -1800,6 +1815,19 @@ impl eframe::App for StackApp {
                 }
             }
         };
+        if self.settings.perf_overlay {
+            self.perf.overlay(ui.ctx());
+            let name = match &self.screen {
+                Screen::Play(_) => "problem",
+                Screen::Match(_) => "match",
+                Screen::Sprint(_) => "sprint",
+                _ => "menu",
+            };
+            self.perf.log(&data_dir().join("perf"), name);
+            ui.ctx().request_repaint();
+        } else {
+            self.perf.stop_log();
+        }
         self.take_autoshot(ui);
     }
 }

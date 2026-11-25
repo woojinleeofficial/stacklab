@@ -3,7 +3,7 @@
 
 use crate::draw::{field, mini_piece, FieldView};
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Vec2};
-use stacklab_bot::player::{bot_handling, BotPlayer};
+use stacklab_bot::player::{bot_handling, AsyncBotPlayer};
 use stacklab_bot::BotConfig;
 use stacklab_engine::board::Board;
 use stacklab_engine::events::EventKind;
@@ -25,7 +25,7 @@ pub enum MatchKind {
 pub struct MatchPlay {
     pub kind: MatchKind,
     pub versus: Versus,
-    pub bot: BotPlayer,
+    pub bot: AsyncBotPlayer,
     pub bot_id: String,
     pub bot_rating: f64,
     pub bot_rd: f64,
@@ -40,6 +40,8 @@ pub struct MatchPlay {
     pub log: VersusReplay,
     /// Match id in the store.
     pub match_id: String,
+    /// UI frames in which the simulation waited for the bot's search.
+    pub stalled: u64,
 }
 
 impl MatchPlay {
@@ -55,7 +57,7 @@ impl MatchPlay {
         in_band: bool,
         seed: u64,
     ) -> MatchPlay {
-        let bot = BotPlayer::new(cfg.clone(), &rs, seed ^ 0xb07);
+        let bot = AsyncBotPlayer::new(cfg.clone(), &rs, seed ^ 0xb07);
         let seeds = [seed, seed.rotate_left(17) ^ 0x51ed];
         let hs = [handling, bot_handling()];
         let versus = Versus::new(rs, seeds, hs);
@@ -64,6 +66,7 @@ impl MatchPlay {
             kind,
             log,
             match_id: String::new(),
+            stalled: 0,
             versus,
             bot,
             bot_id: cfg.id,
@@ -80,17 +83,22 @@ impl MatchPlay {
     }
 
     /// Advances the simulation to wall-clock `now` (fixed 60 Hz, at most 8 frames per call).
-    pub fn advance(&mut self, now: f64) {
+    /// Returns the number of simulated frames.
+    pub fn advance(&mut self, now: f64) -> u32 {
         if self.finished.is_some() {
-            return;
+            return 0;
         }
         if self.sim_time == 0.0 {
             self.sim_time = now;
         }
         let mut steps = 0;
         while self.sim_time + 1.0 / 60.0 <= now && steps < 8 {
+            // the bot searches off the UI thread; wait (without blocking) for a due plan
+            let Some(bot) = self.bot.frame_inputs(&self.versus.players[1]) else {
+                self.stalled += 1;
+                return steps;
+            };
             let user = std::mem::take(&mut self.pending);
-            let bot = self.bot.frame_inputs(&self.versus.players[1]);
             self.log.step(&mut self.versus, [&user, &bot]);
             for e in self.versus.players[0].events() {
                 if matches!(e.kind, EventKind::PieceLock { .. }) {
@@ -104,12 +112,13 @@ impl MatchPlay {
             steps += 1;
             if let Some(w) = self.versus.winner() {
                 self.finished = Some(w == 0);
-                return;
+                return steps;
             }
         }
         if steps == 8 {
             self.sim_time = now;
         }
+        steps
     }
 
     /// Draws both fields with garbage meters, hold and next for the user.
