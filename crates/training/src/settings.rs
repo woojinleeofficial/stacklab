@@ -56,7 +56,7 @@ pub const SDF_RANGE: (u32, u32) = (5, 41);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub handling: Handling,
-    /// (action, key name as egui spells it, e.g. "ArrowLeft", "Space", "Z"). One action may
+    /// (action, key name as egui spells it, e.g. "Left", "Space", "Z"). One action may
     /// have several keys; one key may serve only one action.
     pub bindings: Vec<(Action, String)>,
     #[serde(default)]
@@ -69,11 +69,11 @@ impl Default for Settings {
         Settings {
             handling: Handling::default(),
             bindings: vec![
-                b(Action::Game(Key::Left), "ArrowLeft"),
-                b(Action::Game(Key::Right), "ArrowRight"),
-                b(Action::Game(Key::SoftDrop), "ArrowDown"),
+                b(Action::Game(Key::Left), "Left"),
+                b(Action::Game(Key::Right), "Right"),
+                b(Action::Game(Key::SoftDrop), "Down"),
                 b(Action::Game(Key::HardDrop), "Space"),
-                b(Action::Game(Key::Cw), "ArrowUp"),
+                b(Action::Game(Key::Cw), "Up"),
                 b(Action::Game(Key::Cw), "X"),
                 b(Action::Game(Key::Ccw), "Z"),
                 b(Action::Game(Key::Flip), "A"),

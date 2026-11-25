@@ -54,6 +54,9 @@ pub struct Checkpoint {
     pub open_round: Option<String>,
 }
 
+/// (module letter, attempts, successes, valid for MMR, finesse successes, finesse-judged).
+pub type ModuleStat = (String, u32, u32, u32, u32, u32);
+
 fn res_str(r: Option<bool>) -> Option<&'static str> {
     r.map(|w| if w { "win" } else { "loss" })
 }
@@ -170,6 +173,40 @@ impl Store {
                     replay: replay.map(|b| String::from_utf8_lossy(&b).into_owned()),
                     observations: r.get("observations")?,
                 })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(v)
+    }
+
+    /// Saves a served problem once (an existing row is kept: attempts reference it).
+    pub fn ensure_problem(&self, p: &stacklab_training::Problem) -> Result<()> {
+        let n: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM problem WHERE id = ?1", [&p.id], |r| {
+                    r.get(0)
+                })?;
+        if n == 0 {
+            self.save_problem(p, false)?;
+        }
+        Ok(())
+    }
+
+    // ----- per-module attempt statistics (UI-09) ----------------------------------------
+
+    /// Counted attempts per module letter: (module, attempts, successes, valid for MMR,
+    /// finesse successes among finesse-judged attempts, finesse-judged attempts).
+    pub fn module_stats(&self) -> Result<Vec<ModuleStat>> {
+        let mut st = self.conn.prepare(
+            "SELECT p.module, COUNT(*), SUM(a.success), SUM(a.valid_for_mmr),
+                    SUM(COALESCE(a.finesse_success, 0)), SUM(a.finesse_success IS NOT NULL)
+             FROM attempt a JOIN problem p ON p.id = a.problem_id
+             WHERE a.counted = 1 AND a.invalidated = 0
+             GROUP BY p.module ORDER BY p.module",
+        )?;
+        let v = st
+            .query_map([], |r| {
+                let g = |i| r.get::<_, i64>(i).map(|x| x as u32);
+                Ok((r.get(0)?, g(1)?, g(2)?, g(3)?, g(4)?, g(5)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(v)

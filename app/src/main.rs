@@ -5,22 +5,25 @@
 
 mod draw;
 mod matchplay;
+mod screens;
 mod strings;
 
 use draw::{field, mini_piece, FieldView};
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Vec2};
 use matchplay::{MatchKind, MatchPlay};
-use stacklab_engine::game::{Handling, InputEvent, Key};
+use stacklab_engine::game::InputEvent;
 use stacklab_engine::rng::Rng;
 use stacklab_engine::{Ruleset, Spin};
 use stacklab_store::Store;
 use stacklab_training::adaptive::SkillProfile;
 use stacklab_training::flow::{ProblemRequest, RoundKind, TrainingState};
+use stacklab_training::independent::IndependentTest;
 use stacklab_training::policy::Policy;
 use stacklab_training::problem::{Goal, Module, Problem, WitnessStep};
 use stacklab_training::service::ProblemService;
 use stacklab_training::session::{AttemptResult, AttemptSession, FailReason, Status};
 use stacklab_training::set::{opener_built, MiniStatus, Observations, Phase};
+use stacklab_training::settings::{Action, Settings};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use strings::Strings;
@@ -29,6 +32,13 @@ use strings::Strings;
 enum Request {
     Slot(Module, Box<SkillProfile>, u64),
     Anchor(Module, u64),
+    /// Independent test problem: module, seed, loadout for E, ids served before.
+    Independent(
+        Module,
+        u64,
+        Box<Option<stacklab_opener::loadout::OpenerLoadout>>,
+        Vec<String>,
+    ),
 }
 
 fn spawn_worker(
@@ -47,6 +57,10 @@ fn spawn_worker(
                     svc.next_for(&profile, m, &mut rng).map(|(p, _)| p)
                 }
                 Request::Anchor(m, k) => svc.anchor(m, k),
+                Request::Independent(m, seed, loadout, seen) => {
+                    svc.loadout = *loadout;
+                    svc.independent(m, seed, &seen)
+                }
             };
             if otx.send(p).is_err() {
                 break;
@@ -55,21 +69,6 @@ fn spawn_worker(
         }
     });
     (tx, orx)
-}
-
-/// Default key map (TETR.IO-like defaults). Settings screen arrives in STEP 7.
-fn keymap() -> Vec<(egui::Key, Key)> {
-    vec![
-        (egui::Key::ArrowLeft, Key::Left),
-        (egui::Key::ArrowRight, Key::Right),
-        (egui::Key::ArrowDown, Key::SoftDrop),
-        (egui::Key::Space, Key::HardDrop),
-        (egui::Key::ArrowUp, Key::Cw),
-        (egui::Key::X, Key::Cw),
-        (egui::Key::Z, Key::Ccw),
-        (egui::Key::A, Key::Flip),
-        (egui::Key::C, Key::Hold),
-    ]
 }
 
 /// UI-06 data of the last evaluation.
@@ -100,6 +99,9 @@ enum Screen {
     Match(Box<MatchPlay>),
     /// UI-08: event id and whether the confirmation step (2nd step) is shown.
     Recommend(String, bool),
+    Settings,
+    Stats,
+    Sprint(Box<screens::SprintPlay>),
 }
 
 struct StackApp {
@@ -110,7 +112,6 @@ struct StackApp {
     rng: Rng,
     worker: (Sender<Request>, Receiver<Option<Problem>>),
     screen: Screen,
-    handling: Handling,
     last_report: Option<String>,
     autoshot: Option<(String, u32)>,
     library: stacklab_opener::library::Library,
@@ -126,6 +127,16 @@ struct StackApp {
     /// Checkpoint: the problem on screen (JSON) and the round in progress (match id).
     current_problem: Option<String>,
     open_round: Option<String>,
+    settings: Settings,
+    settings_msg: Option<String>,
+    /// Key being rebound in the settings screen: (action, slot).
+    rebinding: Option<(Action, usize)>,
+    paused: bool,
+    indep: Option<IndependentTest>,
+    indep_state: screens::IndependentState,
+    stats_tab: u8,
+    backup_msg: Option<String>,
+    restore_confirm: Option<std::path::PathBuf>,
 }
 
 fn data_dir() -> std::path::PathBuf {
@@ -203,7 +214,27 @@ impl StackApp {
             .map_or(("tki".to_string(), "free-transition".to_string()), |l| {
                 (l.primary.clone(), l.fallback.clone())
             });
+        let settings = store
+            .as_ref()
+            .and_then(|s| s.get_state("settings").ok().flatten())
+            .and_then(|j| serde_json::from_str::<Settings>(&j).ok())
+            .filter(|s| s.validate().is_ok())
+            .unwrap_or_default();
+        let indep_state = store
+            .as_ref()
+            .and_then(|s| s.get_state("independent").ok().flatten())
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
         let mut app = StackApp {
+            settings,
+            settings_msg: None,
+            rebinding: None,
+            paused: false,
+            indep: None,
+            indep_state,
+            stats_tab: 0,
+            backup_msg: None,
+            restore_confirm: None,
             current_problem,
             open_round: None,
             s: Strings::korean(),
@@ -219,7 +250,6 @@ impl StackApp {
             st,
             rng: Rng::new(seed),
             screen: Screen::Dashboard,
-            handling: Handling::default(),
             last_report: None,
             autoshot,
             library: stacklab_opener::library::Library::bundled(),
@@ -442,11 +472,13 @@ impl StackApp {
     fn open_problem(&mut self, p: Option<Problem>) {
         let session = p
             .as_ref()
-            .and_then(|p| AttemptSession::new(p, self.handling).ok());
+            .and_then(|p| AttemptSession::new(p, self.settings.handling).ok());
         self.screen = match session {
             Some(session) => {
-                self.current_problem = p.and_then(|p| serde_json::to_string(&p).ok());
-                self.persist();
+                if self.indep.is_none() {
+                    self.current_problem = p.and_then(|p| serde_json::to_string(&p).ok());
+                    self.persist();
+                }
                 Screen::Play(Box::new(Playing {
                     session,
                     first: None,
@@ -468,6 +500,15 @@ impl StackApp {
     fn finish_slot(&mut self, play: &Playing) {
         let p = &play.session.problem;
         let first = play.first.clone().unwrap_or_else(|| play.session.result());
+        if let Some(store) = &self.store {
+            let _ = store.ensure_problem(p);
+            let slot = (self.indep.is_none()).then(|| self.st.progress().1 as u32);
+            let _ = store.save_attempt(None, slot, self.indep.is_none(), p, &first, "[]");
+        }
+        if self.indep.is_some() {
+            self.record_independent(p, &first);
+            return;
+        }
         self.current_problem = None;
         if let Some(report) = self.st.record_problem(p, first, &self.policy) {
             self.last_report = Some(self.s.fmt(
@@ -482,6 +523,15 @@ impl StackApp {
     }
 
     fn progress_text(&self) -> String {
+        if let Some(t) = &self.indep {
+            return self.s.fmt(
+                "indep_progress",
+                &[
+                    ("n", (t.results.len() + 1).to_string()),
+                    ("m", t.plan.len().to_string()),
+                ],
+            );
+        }
         let (c, n) = self.st.progress();
         if self.st.diagnosis {
             self.s.fmt(
@@ -522,7 +572,17 @@ impl StackApp {
             if ui.button(self.s.get("openers")).clicked() {
                 self.screen = Screen::Openers;
             }
+            if ui.button(self.s.get("sprint")).clicked() {
+                self.screen = Screen::Sprint(Box::new(self.new_sprint()));
+            }
+            if ui.button(self.s.get("stats")).clicked() {
+                self.screen = Screen::Stats;
+            }
+            if ui.button(self.s.get("settings")).clicked() {
+                self.screen = Screen::Settings;
+            }
         });
+        self.independent_offer(ui);
         self.match_actions(ui);
         if let Some(r) = &self.last_report {
             ui.label(r);
@@ -1262,7 +1322,7 @@ impl StackApp {
         let m = MatchPlay::new(
             kind,
             self.rs.clone(),
-            self.handling,
+            self.settings.handling,
             stacklab_bot::BotConfig::preset(&id),
             cal_rating,
             cal_rd,
@@ -1375,32 +1435,14 @@ impl StackApp {
 
     fn match_screen(&mut self, ui: &mut egui::Ui, mut m: Box<MatchPlay>) -> Screen {
         let base = m.versus.players[0].now_sub();
-        let map = keymap();
-        ui.input(|i| {
-            for e in &i.events {
-                if let egui::Event::Key {
-                    key,
-                    pressed,
-                    repeat,
-                    ..
-                } = e
-                {
-                    if *repeat {
-                        continue;
-                    }
-                    if let Some((_, k)) = map.iter().find(|(ek, _)| ek == key) {
-                        let t = base + (m.pending.len() as u64).min(9);
-                        m.pending.push(InputEvent {
-                            time: t,
-                            key: *k,
-                            down: *pressed,
-                        });
-                    }
-                }
-            }
-        });
+        let _ = self.read_keys(ui, base, &mut m.pending);
         let now = ui.input(|i| i.time);
-        m.advance(now);
+        if self.paused {
+            m.sim_time = now;
+            m.pending.clear();
+        } else {
+            m.advance(now);
+        }
         ui.ctx().request_repaint();
         let (w, l) = self.st.set.score();
         let header = match m.kind {
@@ -1461,38 +1503,9 @@ impl StackApp {
         Screen::Match(m)
     }
 
-    fn collect_inputs(&self, ui: &egui::Ui, play: &mut Playing) -> Vec<&'static str> {
-        let map = keymap();
-        let mut commands = Vec::new();
+    fn collect_inputs(&mut self, ui: &egui::Ui, play: &mut Playing) -> Vec<Action> {
         let base = play.session.game().now_sub();
-        ui.input(|i| {
-            for e in &i.events {
-                if let egui::Event::Key {
-                    key,
-                    pressed,
-                    repeat,
-                    ..
-                } = e
-                {
-                    if *repeat {
-                        continue;
-                    }
-                    if let Some((_, k)) = map.iter().find(|(ek, _)| ek == key) {
-                        let t = base + (play.pending.len() as u64).min(9);
-                        play.pending.push(InputEvent {
-                            time: t,
-                            key: *k,
-                            down: *pressed,
-                        });
-                    } else if *pressed && *key == egui::Key::R {
-                        commands.push("restart");
-                    } else if *pressed && *key == egui::Key::H {
-                        commands.push("hint");
-                    }
-                }
-            }
-        });
-        commands
+        self.read_keys(ui, base, &mut play.pending)
     }
 
     fn play_screen(&mut self, ui: &mut egui::Ui, mut play: Box<Playing>) -> Screen {
@@ -1500,13 +1513,13 @@ impl StackApp {
         if !play.finished {
             for c in self.collect_inputs(ui, &mut play) {
                 match c {
-                    "restart" => play.session.restart(),
-                    "hint" => play.hint = play.session.hint(),
+                    Action::Restart => play.session.restart(),
+                    Action::Hint => play.hint = play.session.hint(),
                     _ => {}
                 }
             }
             let now = ui.input(|i| i.time);
-            if play.sim_time == 0.0 {
+            if play.sim_time == 0.0 || self.paused {
                 play.sim_time = now;
             }
             let mut steps = 0;
@@ -1665,10 +1678,19 @@ impl StackApp {
             );
         });
         if back {
+            self.indep = None; // leaving abandons an independent test (never counted)
             return Screen::Dashboard;
         }
         if next {
+            let was_indep = self.indep.is_some();
             self.finish_slot(&play);
+            if was_indep {
+                if self.indep.is_some() {
+                    self.request_independent();
+                    return std::mem::replace(&mut self.screen, Screen::Loading);
+                }
+                return Screen::Stats;
+            }
             self.request_next();
             return std::mem::replace(&mut self.screen, Screen::Loading);
         }
@@ -1714,6 +1736,9 @@ impl eframe::App for StackApp {
         if self.autoshot.as_ref().is_some_and(|a| a.1 == 1) {
             match std::env::var("STACKLAB_AUTOSCREEN").as_deref() {
                 Ok("openers") => self.screen = Screen::Openers,
+                Ok("settings") => self.screen = Screen::Settings,
+                Ok("stats") => self.screen = Screen::Stats,
+                Ok("sprint") => self.screen = Screen::Sprint(Box::new(self.new_sprint())),
                 Ok("match") => self.start_match(MatchKind::Mini(1)),
                 // headless check only: a strong-PC demo profile in a throwaway HOME
                 Ok("recommend-demo") => {
@@ -1746,6 +1771,25 @@ impl eframe::App for StackApp {
                     .show(ui, |ui| next = self.recommend_screen(ui, &id, confirm));
                 next.unwrap_or(Screen::Recommend(id, confirm))
             }
+            Screen::Settings => {
+                let mut back = false;
+                egui::CentralPanel::default().show(ui, |ui| back = self.settings_screen(ui));
+                if back {
+                    Screen::Dashboard
+                } else {
+                    Screen::Settings
+                }
+            }
+            Screen::Stats => {
+                let mut back = false;
+                egui::CentralPanel::default().show(ui, |ui| back = self.stats_screen(ui));
+                if back {
+                    Screen::Dashboard
+                } else {
+                    Screen::Stats
+                }
+            }
+            Screen::Sprint(sp) => self.sprint_screen(ui, sp),
             Screen::Openers => {
                 let mut back = false;
                 egui::CentralPanel::default().show(ui, |ui| back = self.openers_screen(ui));
